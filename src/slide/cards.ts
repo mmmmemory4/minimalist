@@ -29,7 +29,8 @@ export type SKind =
   | 'UP2' | 'RUSH' | 'CALM'                    // 2マス動く
   | 'LIGHT' | 'DRAG'                           // 身軽
   | 'SLIDE' | 'ICE' | 'STOP'                   // 滑走
-  | 'SWING' | 'MEMO' | 'USED' | 'FAV';         // 役割が変わる・お気に入り
+  | 'SWING' | 'MEMO'                          // 役割が変わる
+  | 'ROOMBA' | 'BIGDAY' | 'BAG' | 'SKATE' | 'COMPASS'; // お気に入り（永続．山札に入らない）
 
 export interface SCardDef {
   kind: SKind;
@@ -41,10 +42,8 @@ export interface SCardDef {
   weight: number;
   /** これを排除したとき，今日の流れからもう1枚を重さ0で排除できる */
   drag?: boolean;
-  /** 物欲の行で止まったとき，回してお気に入りにできる */
-  rotatable?: boolean;
-  /** 取得したときからお気に入り */
-  favorite?: boolean;
+  /** お気に入り（永続）：取得したら自分の前に置き，山札に入らない．効果はずっと続く．排除しなくてよい */
+  perm?: boolean;
   /** 取得するには，衝動がこの値以上の列で止まる必要がある（高い・派手なものは衝動買い） */
   buyNeed?: number;
   /** 排除するには，理性がこの値以上の列で止まる必要がある（思い入れのあるものは冷静にならないと手放せない） */
@@ -77,16 +76,20 @@ export const SCARDS: Record<SKind, SCardDef> = {
   STOP:   { kind: 'STOP',   name: 'ストッパー', move: { t: 'stopper' }, cost: 2, weight: 1, text: '上下左右に積み木を1個置く' },
   SWING:  { kind: 'SWING',  name: '揺り戻し',   move: { t: 'swing' }, cost: 2, weight: 1, text: '物欲の行なら↓2，捨欲の行なら↑1，中央なら↓1' },
   MEMO:   { kind: 'MEMO',   name: '思い出の品', move: { t: 'memo' }, cost: 1, weight: 1, dropNeed: 2, text: `排除${MEMO_AT}枚未満なら↑1，以上なら↓3` },
-  USED:   { kind: 'USED',   name: '愛用品',     move: step(['D'], 1), cost: 3, weight: 1, rotatable: true, buyNeed: 1, dropNeed: 2, text: '↓1．物欲の行で止まったとき回してお気に入りにできる' },
-  FAV:    { kind: 'FAV',    name: '一生モノ',   move: step(['U', 'D', 'L', 'R'], 1), cost: 5, weight: 1, favorite: true, buyNeed: 2, text: 'お気に入り．好きな向きに1' },
+  // お気に入り（永続）：高いが，取ったら次の手番で勝ちうるくらい強い
+  ROOMBA:  { kind: 'ROOMBA',  name: 'ルンバ',       move: { t: 'none' }, cost: 6, weight: 0, perm: true, buyNeed: 1, text: '手番の終わりに，どこで止まっても今日の流れから1枚を排除できる（条件・重さなし）' },
+  BIGDAY:  { kind: 'BIGDAY',  name: '大掃除の日',   move: { t: 'none' }, cost: 5, weight: 0, perm: true, buyNeed: 2, text: '捨欲の行で止まったら，今日の流れを何枚でも排除できる（量・重さを無視）' },
+  BAG:     { kind: 'BAG',     name: '大容量ゴミ袋', move: { t: 'none' }, cost: 5, weight: 0, perm: true, buyNeed: 2, text: '捨欲の行で止まったら，捨札からも量と同じ枚数まで排除できる（重さなし）' },
+  SKATE:   { kind: 'SKATE',   name: 'スケート靴',   move: { t: 'none' }, cost: 6, weight: 0, perm: true, buyNeed: 1, text: '↓に動くときは，ぶつかるまで滑る' },
+  COMPASS: { kind: 'COMPASS', name: 'コンパス',     move: { t: 'none' }, cost: 7, weight: 0, perm: true, buyNeed: 1, text: 'めくったカードの向きを好きな向きに変えられる（歩数はそのまま）' },
 };
 
-/** お気に入りの動き（回した愛用品・一生モノ） */
-export const FAV_MOVE: Move = step(['U', 'D', 'L', 'R'], 1);
+export const PERMS: SKind[] = ['ROOMBA', 'BIGDAY', 'BAG', 'SKATE', 'COMPASS'];
+export const isPerm = (k: SKind) => !!SCARDS[k].perm;
 
 export const STARTING: [SKind, number][] = [['WANT', 2], ['HES', 1], ['DOUBT', 1], ['JUNK', 1]];
 export const UNLIMITED_KINDS: SKind[] = ['DOWN'];
-export const MARKET: SKind[] = ['DOWN', 'DOWN2', 'BR', 'BREATH', 'UP2', 'RUSH', 'CALM', 'LIGHT', 'DRAG', 'SLIDE', 'ICE', 'STOP', 'SWING', 'MEMO', 'USED', 'FAV'];
+export const MARKET: SKind[] = ['DOWN', 'DOWN2', 'BR', 'BREATH', 'UP2', 'RUSH', 'CALM', 'LIGHT', 'DRAG', 'SLIDE', 'ICE', 'STOP', 'SWING', 'MEMO', ...PERMS];
 
 /** その列（x）で止まったとき取得できるか（衝動 = x） */
 export const canBuyAt = (k: SKind, x: number) => (SCARDS[k].buyNeed ?? 0) <= Math.max(0, x);

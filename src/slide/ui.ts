@@ -4,7 +4,7 @@ import './ui.css';
 import { ARROW, Dir, SCARDS, SKind, canBuyAt, canDropAt, needText } from './cards';
 import {
   DEFAULT_BOARD, SBOARDS, SCard, SPlayer, SState, Walk, X_MAX, X_MIN, applySlide, bonus, cellPower,
-  canFlip, choicesFor, favCost, isLastCard, hasBlock, isTrace, isDeep, newSlideGame, ownedCards, removeLoad, rowEffect, samePos, stopperCells, yMax, yMin,
+  canFlip, choicesFor, favCost, isLastCard, hasBlock, isTrace, discardLimit, isDeep, newSlideGame, ownedCards, removeLoad, rowEffect, samePos, stopperCells, yMax, yMin,
 } from './engine';
 import { SBOT_LABELS, SPRESETS, chooseSlideAction } from './bot';
 import { randomSeed } from '../engine/rng';
@@ -19,7 +19,7 @@ const store = {
 let s: SState | null = null;
 let botTypes: string[] = [];
 let timer = 0;
-const sel = { buy: [] as SKind[], remove: new Set<number>(), rotate: new Set<number>() };
+const sel = { buy: [] as SKind[], remove: new Set<number>(), roomba: null as number | null };
 
 const esc = (t: string) => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
@@ -61,13 +61,13 @@ function rulesHTML() {
     <li>毎手番，コマは中央から．少なくとも1枚めくる．山札が尽きたら捨札を混ぜてめくり続けられる</li>
     <li>縦：中央から上が<b>物欲</b>（その行の額まで取得），下が<b>捨欲</b>（その行の量まで排除．一番下は捨札からも1枚）．額・量は盤の左に書いてある</li>
     <li>横：右ほど<b>衝動</b>（取得の額が+1/+2/+3），左ほど<b>理性</b>（排除の量が理性1は+0，理性2・3は+1）</li>
-    <li>高いもの・派手なもの（滑り台・一生モノ・愛用品・氷の廊下・道連れ袋）は<b>衝動の列でないと取得できない</b>．
-      思い入れのあるもの（ガラクタ・思い出の品・愛用品・滑り台）は<b>理性の列でないと排除できない</b></li>
+    <li>高いもの・派手なもの（お気に入り・滑り台・氷の廊下・道連れ袋）は<b>衝動の列でないと取得できない</b>．
+      思い入れのあるもの（ガラクタ・思い出の品・滑り台）は<b>理性の列でないと排除できない</b></li>
     <li>最後の1枚（持ち物が今日めくった1枚だけ）は，どこで止まっても手放せる</li>
     <li>排除できるのは今日めくったカード（重さの合計が量以下）．排除したマスに<b>片付けた跡</b>が残り続ける（排除するたびに増える）</li>
     <li>片付けた跡とストッパーの積み木は壁：そのマスには入れず，手前で止まる．START の上下左右には置けない</li>
-    <li>お気に入り（一生モノ・回した愛用品）は排除できない．お気に入りだけ3枚以下になっても達成</li>
-    <li>誰かが達成したらそのラウンドの最後まで．排除した枚数が多い人の勝ち</li>
+    <li><b>お気に入り</b>（★．ルンバ・大掃除の日・大容量ゴミ袋・スケート靴・コンパス）は取得したら自分の前に置く．山札に入らず，効果がずっと続く．各1枚まで．排除しなくてよい</li>
+    <li>カードが0枚になったら達成（お気に入りは数えない）．誰かが達成したらそのラウンドの最後まで．排除した枚数が多い人の勝ち（同じならお気に入りのコストの合計）</li>
   </ul>`;
 }
 
@@ -111,16 +111,16 @@ function boardHTML(p: SPlayer, big: boolean, clickCells: { x: number; y: number 
 }
 
 function moveText(c: SCard) {
-  return c.fav ? 'お気に入り．好きな向きに1' : SCARDS[c.kind].text;
+  return SCARDS[c.kind].text;
 }
-function cardHTML(c: SCard | { kind: SKind; fav?: boolean; id?: number }, extra = '', cls = '') {
+function cardHTML(c: SCard | { kind: SKind; id?: number }, extra = '', cls = '') {
   const d = SCARDS[c.kind];
-  const fav = 'fav' in c && c.fav;
+  const fav = !!d.perm;
   return `<div class="card ${cls} ${fav ? 'favc' : ''} ${d.cost === null ? 'startc' : ''}" ${'id' in c && c.id ? `data-id="${c.id}"` : ''} ${extra}>
     <div class="ct"><b>${fav ? '★' : ''}${d.name}</b>${d.cost !== null ? `<span class="cost">${d.cost}</span>` : ''}</div>
-    <div class="cm">${esc(fav ? 'お気に入り．好きな向きに1' : d.text)}</div>
-    ${needText(c.kind) && !fav ? `<div class="need">${needBadges(c.kind)}</div>` : ''}
-    <div class="cw">重さ${d.weight}</div></div>`;
+    <div class="cm">${esc(d.text)}</div>
+    ${needText(c.kind) ? `<div class="need">${needBadges(c.kind)}</div>` : ''}
+    <div class="cw">${fav ? 'お気に入り（永続）' : `重さ${d.weight}`}</div></div>`;
 }
 
 function render() {
@@ -149,11 +149,12 @@ function render() {
       <h3>プレイヤー</h3>
       <table class="players"><tr><th></th><th>山札</th><th>捨札</th><th>持ち物</th><th>排除</th><th>取得</th><th>★</th></tr>
       ${s.players.map((q, i) => `<tr class="${i === s!.current ? 'now' : ''}"><td>${esc(q.name)}${q.finished ? ' ✓' : ''}${s!.winners.includes(i) ? ' 🏆' : ''}</td>
-        <td>${q.deck.length}</td><td>${q.discard.length}</td><td>${ownedCards(q).length}</td><td>${q.removed}</td><td>${q.bought}</td><td>${ownedCards(q).filter(c => c.fav).length}</td></tr>`).join('')}</table>
+        <td>${q.deck.length}</td><td>${q.discard.length}</td><td>${ownedCards(q).length}</td><td>${q.removed}</td><td>${q.bought}</td><td>${q.perms.map(k => SCARDS[k].name).join('・') || '−'}</td></tr>`).join('')}</table>
       <div class="minis">${others.map(({ q }) => `<div><small>${esc(q.name)}</small>${boardHTML(q, false)}</div>`).join('')}
         ${s.current !== me && s.phase !== 'over' ? `<div><small>あなた</small>${boardHTML(human, false)}</div>` : ''}</div>
       <h3>あなたのカード <small>（種類順．山札の順番はわからない）</small></h3>
       <div class="owned">${ownedList(human)}</div>
+      ${human.perms.length ? `<h3>あなたのお気に入り <small>（永続）</small></h3><div class="flow">${human.perms.map(k => cardHTML({ kind: k })).join('')}</div>` : ''}
       <h3>市場</h3>
       <div class="market">${marketHTML(false)}</div>
       <h3>記録</h3>
@@ -171,12 +172,12 @@ function render() {
 function ownedList(p: SPlayer) {
   const counts = new Map<string, { c: SCard; n: number }>();
   for (const c of ownedCards(p)) {
-    const k = `${c.kind}${c.fav ? '*' : ''}`;
+    const k = c.kind;
     const e = counts.get(k);
     if (e) e.n++; else counts.set(k, { c, n: 1 });
   }
   return [...counts.values()].sort((a, b) => a.c.kind.localeCompare(b.c.kind))
-    .map(({ c, n }) => `<span class="chip ${c.fav ? 'favc' : ''}" title="${esc(moveText(c))}">${c.fav ? '★' : ''}${SCARDS[c.kind].name}×${n}</span>`).join('');
+    .map(({ c, n }) => `<span class="chip" title="${esc(moveText(c))}">${SCARDS[c.kind].name}×${n}</span>`).join('');
 }
 
 function marketHTML(buying: boolean, x = 0) {
@@ -185,7 +186,7 @@ function marketHTML(buying: boolean, x = 0) {
     const chosen = sel.buy.filter(x => x === kind).length;
     const left = (n ?? 0) - chosen;
     return `<div class="mk">${cardHTML({ kind }, buying ? `data-buy="${kind}"` : '')}
-      <div class="stock">${n! >= 99 ? '∞' : `残り${n}`}${buying ? ` <button data-add="${kind}" ${left <= 0 || !canBuyAt(kind, x) ? 'disabled' : ''}>＋</button><button data-sub="${kind}" ${chosen ? '' : 'disabled'}>−</button> ${chosen ? `<b>×${chosen}</b>` : ''}` : ''}</div></div>`;
+      <div class="stock">${n! >= 99 ? '∞' : `残り${n}`}${buying ? ` <button data-add="${kind}" ${left <= 0 || !canBuyAt(kind, x) || (SCARDS[kind].perm && (cur().perms.includes(kind) || chosen > 0)) ? 'disabled' : ''}>＋</button><button data-sub="${kind}" ${chosen ? '' : 'disabled'}>−</button> ${chosen ? `<b>×${chosen}</b>` : ''}` : ''}</div></div>`;
   }).join('');
 }
 
@@ -219,25 +220,27 @@ function controlsHTML(): string {
         return `<p>最後の1枚です．どこで止まっても手放せます</p>${cardHTML(p.flow[0])}
           <button id="lastdrop" class="primary">手放す</button> <button id="resolve">手放さない</button>`;
       }
+      // ルンバ：どこで止まっても今日の流れから1枚
+      const rb = p.perms.includes('ROOMBA') && p.flow.length
+        ? `<p>★ルンバ：今日の流れから1枚排除できる（条件・重さなし）</p><div class="flow pickable">${p.flow.filter(c => !sel.remove.has(c.id)).map(c => cardHTML(c, `data-rb="${c.id}"`, sel.roomba === c.id ? 'on' : '')).join('')}</div>` : '';
       if (here.kind === 'buy') {
         const total = sel.buy.reduce((n, k) => n + (SCARDS[k].cost ?? 0), 0);
-        const rot = p.flow.filter(c => SCARDS[c.kind].rotatable && !c.fav);
-        return `<p>物欲 <b>${here.amount}</b>：取得するカードを選んでください（使用 ${total}/${here.amount}）</p>
-          <div class="market buying">${marketHTML(true, w.pos.x)}</div>
-          ${rot.length ? `<p>愛用品を回してお気に入りにする：${rot.map(c => `<label><input type="checkbox" data-rot="${c.id}" ${sel.rotate.has(c.id) ? 'checked' : ''}>愛用品</label>`).join(' ')}</p>` : ''}
+        return `<p>物欲 <b>${here.amount}</b>：取得するカードを選んでください（使用 ${total}/${here.amount}）．★お気に入りは自分の前に置かれる</p>
+          <div class="market buying">${marketHTML(true, w.pos.x)}</div>${rb}
           <button id="resolve" class="primary" ${total > here.amount ? 'disabled' : ''}>決定</button>`;
       }
       if (here.kind === 'remove') {
         const flowSel = p.flow.filter(c => sel.remove.has(c.id));
-        const load = removeLoad(flowSel);
-        const deep = isDeep(w.pos.y, st.board);
+        const big = p.perms.includes('BIGDAY');
+        const load = big ? 0 : removeLoad(flowSel);
+        const dn = discardLimit(p, here.amount, isDeep(w.pos.y, st.board));
         const discSel = p.discard.filter(c => sel.remove.has(c.id));
-        return `<p>捨欲 <b>${here.amount}</b>：今日の流れから排除するカードを選んでください（重さ ${load}/${here.amount}）</p>
-          <div class="flow pickable">${p.flow.map(c => canDropAt(c.kind, w.pos.x) && !c.fav ? cardHTML(c, `data-rm="${c.id}"`, sel.remove.has(c.id) ? 'on' : '') : cardHTML(c, '', 'no')).join('')}</div>
-          ${deep ? `<p>捨欲3：捨札からも1枚（重さ0）</p><div class="flow pickable">${p.discard.filter(c => !c.fav && canDropAt(c.kind, w.pos.x)).map(c => cardHTML(c, `data-rm="${c.id}"`, sel.remove.has(c.id) ? 'on' : '')).join('') || '<span class="muted">捨札はありません</span>'}</div>` : ''}
-          <button id="resolve" class="primary" ${load > here.amount || discSel.length > 1 ? 'disabled' : ''}>決定</button>`;
+        return `<p>捨欲 <b>${here.amount}</b>：今日の流れから排除するカードを選んでください（${big ? '★大掃除の日：何枚でも' : `重さ ${load}/${here.amount}`}）</p>
+          <div class="flow pickable">${p.flow.map(c => canDropAt(c.kind, w.pos.x) && sel.roomba !== c.id ? cardHTML(c, `data-rm="${c.id}"`, sel.remove.has(c.id) ? 'on' : '') : cardHTML(c, '', 'no')).join('')}</div>
+          ${dn ? `<p>捨札からも${dn}枚まで（重さなし）</p><div class="flow pickable">${p.discard.filter(c => canDropAt(c.kind, w.pos.x)).map(c => cardHTML(c, `data-rm="${c.id}"`, sel.remove.has(c.id) ? 'on' : '')).join('') || '<span class="muted">捨札はありません</span>'}</div>` : ''}${rb}
+          <button id="resolve" class="primary" ${load > here.amount || discSel.length > dn ? 'disabled' : ''}>決定</button>`;
       }
-      return `<p>効果のないマスで止まりました</p><button id="resolve" class="primary">手番を終える</button>`;
+      return `<p>効果のないマスで止まりました</p>${rb}<button id="resolve" class="primary">手番を終える</button>`;
     }
   }
 }
@@ -245,7 +248,7 @@ function controlsHTML(): string {
 function act(a: Parameters<typeof applySlide>[2]) {
   try {
     applySlide(s!, me, a);
-    if (a.type === 'resolve' || s!.turn === 'resolve') { sel.buy = []; sel.remove.clear(); sel.rotate.clear(); }
+    if (a.type === 'resolve' || s!.turn === 'resolve') { sel.buy = []; sel.remove.clear(); sel.roomba = null; }
   } catch (e) { alert((e as Error).message); }
   render();
 }
@@ -271,17 +274,18 @@ function bindControls(clickCells: { x: number; y: number }[]) {
     if (i >= 0) sel.buy.splice(i, 1);
     render();
   });
-  app.querySelectorAll<HTMLInputElement>('[data-rot]').forEach(b => b.onchange = () => {
-    const id = +b.dataset.rot!;
-    if (b.checked) sel.rotate.add(id); else sel.rotate.delete(id);
+  app.querySelectorAll<HTMLElement>('[data-rb]').forEach(el => el.onclick = () => {
+    const id = +el.dataset.rb!;
+    sel.roomba = sel.roomba === id ? null : id;
+    render();
   });
   app.querySelectorAll<HTMLElement>('[data-rm]').forEach(el => el.onclick = () => {
     const id = +el.dataset.rm!;
     if (sel.remove.has(id)) sel.remove.delete(id); else sel.remove.add(id);
     render();
   });
-  q('#lastdrop')?.addEventListener('click', () => act({ type: 'resolve', buy: [], remove: [cur().flow[0].id], rotate: [] }));
-  q('#resolve')?.addEventListener('click', () => act({ type: 'resolve', buy: [...sel.buy], remove: [...sel.remove], rotate: [...sel.rotate] }));
+  q('#lastdrop')?.addEventListener('click', () => act({ type: 'resolve', buy: [], remove: [cur().flow[0].id] }));
+  q('#resolve')?.addEventListener('click', () => act({ type: 'resolve', buy: [...sel.buy], remove: [...sel.remove], ...(sel.roomba !== null ? { roomba: sel.roomba } : {}) }));
 }
 
 function botStep() {

@@ -4,7 +4,7 @@
 //   積み木（片付けた跡1個・ストッパー）：壁．積み木のマスには入れず，その手前で止まる
 //   列（理性・衝動）の効果は額・量の上乗せだけ（v0.4）
 
-import { DELTA, Dir, FAV_MOVE, canBuyAt, canDropAt, LIGHT_PER, MEMO_AT, Move, SCARDS, SKind, STARTING, UNLIMITED_KINDS, MARKET } from './cards';
+import { DELTA, DIRS, Dir, canBuyAt, isPerm, canDropAt, LIGHT_PER, MEMO_AT, Move, SCARDS, SKind, STARTING, UNLIMITED_KINDS, MARKET } from './cards';
 import { shuffle } from '../engine/rng';
 
 export const X_MIN = -3, X_MAX = 3;
@@ -23,7 +23,6 @@ export const yMin = (b: SBoard) => -b.remove.length;
 export const isDeep = (y: number, b: SBoard) => y === yMin(b);
 /** ストッパーの積み木（1人の上限．超えたら一番古いものを動かす） */
 export const BLOCKS = 3;
-export const FINISH_FAVS = 3;
 export const MAX_ROUNDS = 60;
 export const UNLIMITED = 99;
 
@@ -46,11 +45,13 @@ export let REASON_BONUS = [0, 1, 1]; // v0.4.1：最初から量2・3に届か�
 export const setReasonBonus = (a: number[]) => { REASON_BONUS = a; };
 export const bonus = (x: number, kind: 'buy' | 'remove') => (kind === 'buy' ? Math.max(0, x) : x < 0 ? REASON_BONUS[-x - 1] : 0);
 
-export interface SCard { id: number; kind: SKind; fav: boolean }
+export interface SCard { id: number; kind: SKind }
 
 /** 手番中の動きの状態（ボットの先読みでも使う） */
 /** blocks はストッパーの積み木，traces は片付けた跡（排除したマスに残り続ける．排除するたびに増える） */
-export interface Walk { board: SBoard; pos: Pos; lastDir: Dir | null; blocks: Pos[]; traces?: Pos[]; trail: Pos[] }
+/** perks は持っているお気に入り（動きに効くもの：スケート靴・コンパス） */
+export interface Walk { board: SBoard; pos: Pos; lastDir: Dir | null; blocks: Pos[]; traces?: Pos[]; trail: Pos[]; perks?: SKind[] }
+export const hasPerk = (w: Walk, k: SKind) => !!w.perks?.includes(k);
 
 /** 積み木のあるマス */
 export const isTrace = (w: Walk, p: Pos) => !!w.traces?.some(t => samePos(t, p));
@@ -61,6 +62,7 @@ export const blocked = (w: Walk, p: Pos) => !inBoard(p, w.board) || hasBlock(w, 
 /** dir に n マス（盤の端・積み木の手前で止まる） */
 export function walk(w: Walk, dir: Dir, n: number): void {
   const [dx, dy] = DELTA[dir];
+  if (dir === 'D' && hasPerk(w, 'SKATE')) n = Infinity; // スケート靴：↓はぶつかるまで滑る
   w.lastDir = dir;
   for (let i = 0; i < n; i++) {
     const next = { x: w.pos.x + dx, y: w.pos.y + dy };
@@ -72,11 +74,12 @@ export function walk(w: Walk, dir: Dir, n: number): void {
 
 /** カードの動き（選べる向きの一覧．空なら選ぶ必要なし） */
 export function moveOf(card: SCard): Move {
-  return card.fav ? FAV_MOVE : SCARDS[card.kind].move;
+  return SCARDS[card.kind].move;
 }
 
 export function choicesFor(card: SCard, w: Walk): Dir[] {
   const m = moveOf(card);
+  if (m.t === 'step' && hasPerk(w, 'COMPASS')) return DIRS; // コンパス：好きな向きに
   return m.t === 'step' && m.dirs.length > 1 ? m.dirs : [];
 }
 
@@ -100,7 +103,7 @@ export function applyMove(card: SCard, w: Walk, removed: number, dir?: Dir, cell
   const m = moveOf(card);
   switch (m.t) {
     case 'step': {
-      const d = m.dirs.length > 1 ? dir ?? m.dirs[0] : m.dirs[0];
+      const d = dir ?? m.dirs[0];
       walk(w, d, m.n + (m.light ? Math.floor(removed / LIGHT_PER) : 0));
       return !!m.stop;
     }
@@ -131,6 +134,8 @@ export interface SPlayer {
   discard: SCard[];
   /** 今日の流れ（この手番にめくったカード） */
   flow: SCard[];
+  /** お気に入り（永続．自分の前に置く．山札に入らない） */
+  perms: SKind[];
   walk: Walk;
   removed: number;
   bought: number;
@@ -156,11 +161,12 @@ export type SAction =
   | { type: 'stop' }
   | { type: 'branch'; dir: Dir }
   | { type: 'stopper'; cell: Pos | null }
-  | { type: 'resolve'; buy: SKind[]; remove: number[]; rotate: number[] };
+  /** roomba：ルンバで排除する今日の流れの1枚 */
+  | { type: 'resolve'; buy: SKind[]; remove: number[]; roomba?: number };
 
 export class SRuleError extends Error {}
 
-const newWalk = (board: SBoard, blocks: Pos[], traces: Pos[] = []): Walk => ({ board, pos: { x: 0, y: 0 }, lastDir: null, blocks, traces, trail: [{ x: 0, y: 0 }] });
+const newWalk = (board: SBoard, blocks: Pos[], traces: Pos[] = [], perks: SKind[] = []): Walk => ({ board, pos: { x: 0, y: 0 }, lastDir: null, blocks, traces, perks, trail: [{ x: 0, y: 0 }] });
 
 export function newSlideGame(
   setup: { name: string; isBot?: boolean; botType?: string }[], seed: number, opts: { market?: SKind[]; board?: string } = {},
@@ -173,20 +179,21 @@ export function newSlideGame(
   for (const k of market) s.market[k] = UNLIMITED_KINDS.includes(k) ? UNLIMITED : Math.max(2, setup.length);
   for (const p of setup) {
     const deck: SCard[] = [];
-    for (const [k, n] of STARTING) for (let i = 0; i < n; i++) deck.push({ id: s.nextId++, kind: k, fav: false });
+    for (const [k, n] of STARTING) for (let i = 0; i < n; i++) deck.push({ id: s.nextId++, kind: k });
     shuffle(deck, s);
-    s.players.push({ name: p.name, isBot: !!p.isBot, botType: p.botType, deck, discard: [], flow: [], walk: newWalk(board, []), removed: 0, bought: 0, finished: false });
+    s.players.push({ name: p.name, isBot: !!p.isBot, botType: p.botType, deck, discard: [], flow: [], perms: [], walk: newWalk(board, []), removed: 0, bought: 0, finished: false });
   }
   s.log.push('ゲーム開始');
   return s;
 }
 
 export const ownedCards = (p: SPlayer) => [...p.deck, ...p.discard, ...p.flow];
-/** 最後の1枚：持ち物が今日の流れの1枚（お気に入りでない）だけ */
-export const isLastCard = (p: SPlayer) => !p.deck.length && !p.discard.length && p.flow.length === 1 && !p.flow[0].fav;
-/** 達成：カードが0枚，またはお気に入りだけで FINISH_FAVS 枚以下 */
-export const isDone = (p: SPlayer) => { const o = ownedCards(p); return o.length <= FINISH_FAVS && o.every(c => c.fav) || o.length === 0; };
-export const favCost = (p: SPlayer) => ownedCards(p).filter(c => c.fav).reduce((n, c) => n + (SCARDS[c.kind].cost ?? 0), 0);
+/** 最後の1枚：持ち物が今日の流れの1枚だけ */
+export const isLastCard = (p: SPlayer) => !p.deck.length && !p.discard.length && p.flow.length === 1;
+/** 達成：カードが0枚（お気に入りは数えない） */
+export const isDone = (p: SPlayer) => ownedCards(p).length === 0;
+/** お気に入りのコストの合計（同点のとき） */
+export const favCost = (p: SPlayer) => p.perms.reduce((n, k) => n + (SCARDS[k].cost ?? 0), 0);
 
 /** 止まったマスの効果の額・量（上乗せ込み） */
 export function cellPower(pos: Pos, b: SBoard): { kind: 'buy' | 'remove' | 'none'; amount: number } {
@@ -252,52 +259,59 @@ function stop(s: SState, _p: SPlayer): void {
   s.turn = 'resolve';
 }
 
-function resolve(s: SState, p: SPlayer, a: { buy: SKind[]; remove: number[]; rotate: number[] }): void {
+/** 捨札から排除できる枚数（一番下の行で1枚．大容量ゴミ袋なら量の枚数を足す．重さは無視） */
+export const discardLimit = (p: SPlayer, amount: number, deep: boolean) => (deep ? 1 : 0) + (p.perms.includes('BAG') ? amount : 0);
+
+function resolve(s: SState, p: SPlayer, a: { buy: SKind[]; remove: number[]; roomba?: number }): void {
   const pos = p.walk.pos;
   const power = cellPower(pos, s.board);
-  if (power.kind !== 'buy' && (a.buy.length || a.rotate.length)) throw new SRuleError('物欲の行でしか取得できません');
+  if (power.kind !== 'buy' && a.buy.length) throw new SRuleError('物欲の行でしか取得できません');
   // 取得
   let total = 0;
   const need: Partial<Record<SKind, number>> = {};
   for (const k of a.buy) {
     const cost = SCARDS[k].cost;
     if (cost === null || s.market[k] === undefined) throw new SRuleError('市場にないカードです');
+    if (isPerm(k) && (p.perms.includes(k) || a.buy.filter(x => x === k).length > 1)) throw new SRuleError('同じお気に入りは1枚まで');
     if (!canBuyAt(k, pos.x)) throw new SRuleError(`${SCARDS[k].name}は衝動${SCARDS[k].buyNeed}以上の列でないと取得できません`);
     total += cost;
     need[k] = (need[k] ?? 0) + 1;
   }
   for (const [k, n] of Object.entries(need)) if ((s.market[k as SKind] ?? 0) < n!) throw new SRuleError(`${SCARDS[k as SKind].name}は売り切れです`);
   if (total > power.amount && power.kind === 'buy') throw new SRuleError(`物欲${power.amount}を超えています`);
-  for (const id of a.rotate) {
-    const c = p.flow.find(x => x.id === id);
-    if (!c || !SCARDS[c.kind].rotatable || c.fav) throw new SRuleError('回せるのは今日の流れの愛用品だけです');
-  }
-  // 排除：今日の流れから．捨欲3なら捨札から1枚（重さ0）
+  // 排除：今日の流れから．一番下の行なら捨札から1枚（重さ0）．大容量ゴミ袋なら捨札からも
   const ids = [...new Set(a.remove)];
   const fromFlow = ids.map(id => p.flow.find(c => c.id === id)).filter(Boolean) as SCard[];
   const fromDiscard = ids.map(id => p.discard.find(c => c.id === id)).filter(Boolean) as SCard[];
   if (fromFlow.length + fromDiscard.length !== ids.length) throw new SRuleError('今日の流れのカードしか排除できません');
-  if (fromDiscard.length > (isDeep(pos.y, s.board) ? 1 : 0)) throw new SRuleError('捨札から排除できるのは捨欲3で1枚だけです');
-  if ([...fromFlow, ...fromDiscard].some(c => c.fav)) throw new SRuleError('お気に入りは排除できません');
+  const deep = isDeep(pos.y, s.board);
+  if (fromDiscard.length > (power.kind === 'remove' ? discardLimit(p, power.amount, deep) : 0)) throw new SRuleError('捨札から排除できる枚数を超えています');
   // 最後の1枚：持ち物が今日の流れの1枚だけなら，どこで止まってもその1枚は手放せる
   const last = isLastCard(p) && fromFlow.length === 1 && !fromDiscard.length;
   if (!last) {
     if (power.kind !== 'remove' && ids.length) throw new SRuleError('捨欲の行でしか排除できません');
     const hard = [...fromFlow, ...fromDiscard].find(c => !canDropAt(c.kind, pos.x));
     if (hard) throw new SRuleError(`${SCARDS[hard.kind].name}は理性${SCARDS[hard.kind].dropNeed}以上の列でないと排除できません`);
-    if (power.kind === 'remove' && removeLoad(fromFlow) > power.amount) throw new SRuleError(`捨欲${power.amount}を超えています`);
+    // 大掃除の日：今日の流れは量・重さを無視
+    const load = p.perms.includes('BIGDAY') ? 0 : removeLoad(fromFlow);
+    if (power.kind === 'remove' && load > power.amount) throw new SRuleError(`捨欲${power.amount}を超えています`);
+  }
+  // ルンバ：どこで止まっても今日の流れから1枚（条件・重さなし）
+  if (a.roomba !== undefined) {
+    if (!p.perms.includes('ROOMBA')) throw new SRuleError('ルンバを持っていません');
+    if (!p.flow.some(c => c.id === a.roomba) || ids.includes(a.roomba)) throw new SRuleError('ルンバで排除できるのは今日の流れの1枚です');
   }
 
-  for (const id of a.rotate) p.flow.find(x => x.id === id)!.fav = true;
   for (const k of a.buy) {
     if (!UNLIMITED_KINDS.includes(k)) s.market[k]!--;
-    p.discard.push({ id: s.nextId++, kind: k, fav: !!SCARDS[k].favorite });
+    if (isPerm(k)) { p.perms.push(k); p.walk.perks = [...p.perms]; } // お気に入りは自分の前に
+    else p.discard.push({ id: s.nextId++, kind: k });
     p.bought++;
   }
-  const gone = new Set(ids);
+  const gone = new Set(a.roomba !== undefined ? [...ids, a.roomba] : ids);
   p.flow = p.flow.filter(c => !gone.has(c.id));
   p.discard = p.discard.filter(c => !gone.has(c.id));
-  p.removed += ids.length;
+  p.removed += gone.size;
   // 片付けた跡：排除したマスに残り続け，そのマスには入れない（START のまわりには置かない）
   if (ids.length && !noBlockZone(pos)) (p.walk.traces ??= []).push({ ...pos });
 
@@ -306,7 +320,7 @@ function resolve(s: SState, p: SPlayer, a: { buy: SKind[]; remove: number[]; rot
   if (power.kind !== 'none') parts.push(`${power.kind === 'buy' ? '物欲' : '捨欲'}${power.amount}`);
   if (ids.length) parts.push(`${ids.length}枚排除`);
   if (a.buy.length) parts.push(`取得 ${a.buy.map(k => SCARDS[k].name).join('・')}`);
-  if (a.rotate.length) parts.push(`お気に入り ${a.rotate.length}枚`);
+  if (a.roomba !== undefined) parts.push('ルンバで1枚排除');
   s.log.push(parts.join(' / '));
   endTurn(s, p);
 }
@@ -343,7 +357,7 @@ function endTurn(s: SState, p: SPlayer): void {
 
 function startTurn(s: SState): void {
   const p = s.players[s.current];
-  p.walk = newWalk(s.board, p.walk.blocks, p.walk.traces ?? []);
+  p.walk = newWalk(s.board, p.walk.blocks, p.walk.traces ?? [], p.perms);
   s.turn = 'move';
   if (p.deck.length === 0) reshuffle(s, p);
 }

@@ -24,6 +24,7 @@ export function runReport(games: number, label = '') {
   const finishBy = { zero: 0, fav: 0 };
   let draws = 0;
   const maxTr: number[] = [];
+  const permBuys: Record<string, number> = {};
   // 止まった行・列：前半（ラウンド1〜4）と後半（5〜）
   const rowHist = { early: new Map<number, number>(), late: new Map<number, number>() };
   const colHist = { early: new Map<number, number>(), late: new Map<number, number>() };
@@ -48,13 +49,13 @@ export function runReport(games: number, label = '') {
       }
     }
     rounds.push(s.round);
-    for (const p of s.players) maxTr.push(p.walk.traces?.length ?? 0);
+    for (const p of s.players) { maxTr.push(p.walk.traces?.length ?? 0); for (const k of p.perms) permBuys[k] = (permBuys[k] ?? 0) + 1; }
     s.players.forEach((p, i) => { (buys[who[i]] ??= []).push(p.bought); });
     who.forEach(w => { app[w] = (app[w] ?? 0) + 1; });
     if (!s.winners.length) { draws++; continue; }
     for (const i of s.winners) {
       win[who[i]] = (win[who[i]] ?? 0) + n / s.winners.length;
-      if (ownedCards(s.players[i]).length) finishBy.fav++; else finishBy.zero++;
+      if (s.players[i].perms.length) finishBy.fav++; else finishBy.zero++;
     }
   }
   const avg = (a: number[] = []) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
@@ -63,7 +64,7 @@ export function runReport(games: number, label = '') {
     return keys.map(k => `${k}:${Math.round(100 * (m.get(k) ?? 0) / t)}`).join(' ');
   };
   console.log(`\n## ${label || `スライド版・盤 ${BOARD}`}（${games}試合，2〜4人）`);
-  console.log(`平均ラウンド ${avg(rounds).toFixed(1)}，引分 ${Math.round(100 * draws / games)}%，達成の仕方 0枚 ${finishBy.zero} / お気に入り ${finishBy.fav}`);
+  console.log(`平均ラウンド ${avg(rounds).toFixed(1)}，引分 ${Math.round(100 * draws / games)}%，勝者 お気に入りなし ${finishBy.zero} / あり ${finishBy.fav}`);
   console.log(`片付けた跡 平均${avg(maxTr).toFixed(1)}個・最大${Math.max(...maxTr)}個`);
   console.log('| 型 | 勝率倍率 | 取得/人 |');
   console.log('|---|---|---|');
@@ -73,6 +74,7 @@ export function runReport(games: number, label = '') {
   console.log(`止まった行(%) 後半 ${pctMap(rowHist.late, rows)}`);
   console.log(`止まった列(%) 前半 ${pctMap(colHist.early, cols)}`);
   console.log(`止まった列(%) 後半 ${pctMap(colHist.late, cols)}`);
+  console.log(`お気に入りの取得 ${Object.entries(permBuys).map(([k, v]) => `${k}${v}`).join(' ')}`);
   console.log(`取得されたカード ${Object.entries(bought).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}${v}`).join(' ')}`);
 }
 

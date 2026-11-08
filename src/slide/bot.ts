@@ -1,28 +1,26 @@
 // スライド版のボット．めくるか止めるかは「止めたときの価値」と「めくり続けたときの期待値」（2手先まで）を比べて決める．
 // 型（genome）ごとに取得の優先順・お気に入りの扱いが違う．型が勝ち筋（身軽・滑走・お気に入り・揺り戻し）に対応する
 
-import { Dir, SCARDS, SKind, canBuyAt, canDropAt } from './cards';
+import { Dir, SCARDS, SKind, canBuyAt, canDropAt, isPerm } from './cards';
 import {
-  SAction, SCard, SPlayer, SState, Walk, applyMove, applySlide, cellPower, choicesFor,
-  canFlip, isDeep, isLastCard, moveOf, ownedCards, removeLoad, stopperCells,
+  SAction, SCard, SPlayer, SState, Walk, applyMove, applySlide, cellPower, choicesFor, discardLimit, removeLoad,
+  canFlip, isDeep, isLastCard, moveOf, ownedCards, stopperCells,
 } from './engine';
 
 export interface SGenome {
   /** 取得の優先順と上限枚数（持っている枚数がこれ未満なら買う） */
   buy: { kind: SKind; cap: number }[];
-  /** 愛用品を回してお気に入りにするか */
-  favorite: boolean;
   /** めくり続けたときの期待値に掛ける係数（大きいほど攻める） */
   greed: number;
 }
 
 export const SPRESETS: Record<string, SGenome> = {
-  light:  { favorite: false, greed: 1.0, buy: [{ kind: 'LIGHT', cap: 3 }, { kind: 'CALM', cap: 1 }, { kind: 'DOWN2', cap: 1 }, { kind: 'DRAG', cap: 1 }, { kind: 'DOWN', cap: 1 }] },
-  slide:  { favorite: false, greed: 1.0, buy: [{ kind: 'SLIDE', cap: 2 }, { kind: 'RUSH', cap: 1 }, { kind: 'ICE', cap: 1 }, { kind: 'CALM', cap: 1 }, { kind: 'STOP', cap: 1 }, { kind: 'DOWN2', cap: 1 }] },
-  fav:    { favorite: true,  greed: 1.0, buy: [{ kind: 'FAV', cap: 2 }, { kind: 'USED', cap: 2 }, { kind: 'RUSH', cap: 1 }, { kind: 'DOWN2', cap: 2 }, { kind: 'CALM', cap: 1 }] },
-  swing:  { favorite: false, greed: 1.0, buy: [{ kind: 'SWING', cap: 3 }, { kind: 'UP2', cap: 1 }, { kind: 'MEMO', cap: 2 }, { kind: 'CALM', cap: 1 }, { kind: 'DOWN2', cap: 1 }] },
-  mixed:  { favorite: false, greed: 1.0, buy: [{ kind: 'DOWN2', cap: 2 }, { kind: 'UP2', cap: 1 }, { kind: 'BREATH', cap: 1 }, { kind: 'BR', cap: 1 }, { kind: 'LIGHT', cap: 1 }, { kind: 'SWING', cap: 1 }] },
-  nobuy:  { favorite: false, greed: 1.0, buy: [{ kind: 'DOWN', cap: 2 }] },
+  light:  { greed: 1.0, buy: [{ kind: 'LIGHT', cap: 3 }, { kind: 'CALM', cap: 1 }, { kind: 'DOWN2', cap: 1 }, { kind: 'DRAG', cap: 1 }, { kind: 'DOWN', cap: 1 }] },
+  slide:  { greed: 1.0, buy: [{ kind: 'SLIDE', cap: 2 }, { kind: 'RUSH', cap: 1 }, { kind: 'ICE', cap: 1 }, { kind: 'CALM', cap: 1 }, { kind: 'STOP', cap: 1 }, { kind: 'DOWN2', cap: 1 }] },
+  fav:    { greed: 1.0, buy: [{ kind: 'BIGDAY', cap: 1 }, { kind: 'BAG', cap: 1 }, { kind: 'ROOMBA', cap: 1 }, { kind: 'SKATE', cap: 1 }, { kind: 'COMPASS', cap: 1 }, { kind: 'UP2', cap: 1 }, { kind: 'RUSH', cap: 1 }, { kind: 'DOWN2', cap: 1 }] },
+  swing:  { greed: 1.0, buy: [{ kind: 'SWING', cap: 3 }, { kind: 'UP2', cap: 1 }, { kind: 'MEMO', cap: 2 }, { kind: 'CALM', cap: 1 }, { kind: 'DOWN2', cap: 1 }] },
+  mixed:  { greed: 1.0, buy: [{ kind: 'DOWN2', cap: 2 }, { kind: 'UP2', cap: 1 }, { kind: 'BREATH', cap: 1 }, { kind: 'BR', cap: 1 }, { kind: 'LIGHT', cap: 1 }, { kind: 'SWING', cap: 1 }] },
+  nobuy:  { greed: 1.0, buy: [{ kind: 'DOWN', cap: 2 }] },
 };
 export const SBOT_LABELS: Record<string, string> = {
   light: '身軽型', slide: '滑走型', fav: 'お気に入り型', swing: '揺り戻し型', mixed: 'バランス型', nobuy: '最小限型',
@@ -35,7 +33,7 @@ interface Ctx { s: SState; p: SPlayer; g: SGenome }
 /** 取得：優先順に，上限まで，予算内で（貪欲）．価値は優先度の重み */
 export function planBuy(c: Ctx, budget: number, x: number): { buy: SKind[]; value: number } {
   const owned = ownedCards(c.p);
-  const have = (k: SKind) => owned.filter(x => x.kind === k).length;
+  const have = (k: SKind) => (isPerm(k) ? +c.p.perms.includes(k) : owned.filter(x => x.kind === k).length);
   const buy: SKind[] = [];
   let value = 0, left = budget;
   c.g.buy.forEach(({ kind, cap }, i) => {
@@ -45,7 +43,7 @@ export function planBuy(c: Ctx, budget: number, x: number): { buy: SKind[]; valu
     while (n < cap && stock > 0 && cost <= left) {
       buy.push(kind);
       left -= cost; n++; stock--;
-      value += 1.5 + (c.g.buy.length - i) * 0.3 + cost * 0.3;
+      value += 1.5 + (c.g.buy.length - i) * 0.3 + cost * 0.3 + (isPerm(kind) ? 3 : 0);
     }
   });
   return { buy, value };
@@ -53,50 +51,54 @@ export function planBuy(c: Ctx, budget: number, x: number): { buy: SKind[]; valu
 
 /** 捨てたい順（大きいほど先に捨てる）：初期カード > 上限を超えた・型に無いカード > 型のカード */
 function trashScore(c: Ctx, card: SCard): number {
-  if (card.fav) return -99;
   if (SCARDS[card.kind].cost === null) return 10 + SCARDS[card.kind].weight;
   const i = c.g.buy.findIndex(b => b.kind === card.kind);
   return i < 0 ? 6 : 3 - i * 0.2;
 }
 
-/** 排除：今日の流れから，捨てたい順に，量の範囲で．終盤は型のカードも捨てる */
+/** 排除：今日の流れから，捨てたい順に，量の範囲で．終盤は型のカードも捨てる（お気に入りの効果も使う） */
 export function planRemove(c: Ctx, flow: SCard[], amount: number, deep: boolean, xcol: number): { remove: number[]; value: number } {
-  const owned = ownedCards(c.p).filter(x => !x.fav);
-  const cand = flow.filter(x => !x.fav && canDropAt(x.kind, xcol)).sort((a, b) => trashScore(c, b) - trashScore(c, a));
+  const owned = ownedCards(c.p);
+  const big = c.p.perms.includes('BIGDAY');
+  const cand = flow.filter(x => canDropAt(x.kind, xcol)).sort((a, b) => trashScore(c, b) - trashScore(c, a));
   const chosen: SCard[] = [];
-  for (const x of cand) {
-    if (removeLoad([...chosen, x]) <= amount) chosen.push(x);
-  }
-  // 型のカードは，残りが少ない（仕上げ）か，ほかに何も捨てられないときだけ捨てる
-  const keepCore = owned.length - chosen.length > 4;
+  for (const x of cand) if (big || removeLoad([...chosen, x]) <= amount) chosen.push(x);
+  // 型のカードは，残りが少ない（仕上げ）か，ほかに何も捨てられないときだけ捨てる（大掃除の日・ゴミ袋があれば全部）
+  const dn = discardLimit(c.p, amount, deep);
+  // 全部片付けられるなら全部（勝ち）．そうでなければ，型のカード（↓に動くもの）は残りが少なくなるまで取っておく
+  const ds0 = c.p.discard.filter(x => canDropAt(x.kind, xcol)).length;
+  const wipe = chosen.length + Math.min(dn, ds0) >= owned.length;
+  const keepCore = !wipe && owned.length - chosen.length > 4;
   let picked = chosen.filter(x => !keepCore || trashScore(c, x) >= 5 || chosen.every(y => trashScore(c, y) < 5));
   if (keepCore && picked.length === chosen.length && picked.every(x => trashScore(c, x) < 5)) picked = picked.slice(0, 1);
   const remove = picked.map(x => x.id);
   let value = picked.reduce((n, x) => n + 2 + Math.max(0, trashScore(c, x)) * 0.2, 0);
-  if (deep) {
-    const d = c.p.discard.filter(x => !x.fav && canDropAt(x.kind, xcol)).sort((a, b) => trashScore(c, b) - trashScore(c, a))[0];
-    if (d) { remove.push(d.id); value += 2; }
-  }
+  const ds = c.p.discard.filter(x => canDropAt(x.kind, xcol)).sort((a, b) => trashScore(c, b) - trashScore(c, a)).slice(0, dn);
+  for (const d of ds) { remove.push(d.id); value += 2; }
+  if (remove.length >= owned.length) value += 30; // 片付け終わる
   return { remove, value };
 }
 
-/** 愛用品を回すか */
-function planRotate(c: Ctx, flow: SCard[]): number[] {
-  if (!c.g.favorite) return [];
-  const favs = ownedCards(c.p).filter(x => x.fav).length;
-  return flow.filter(x => SCARDS[x.kind].rotatable && !x.fav).slice(0, Math.max(0, 3 - favs)).map(x => x.id);
+/** ルンバで排除する1枚（捨てたいカードがあれば） */
+function planRoomba(c: Ctx, flow: SCard[], removed: number[]): number | undefined {
+  if (!c.p.perms.includes('ROOMBA')) return undefined;
+  const left = flow.filter(x => !removed.includes(x.id)).sort((a, b) => trashScore(c, b) - trashScore(c, a))[0];
+  if (!left) return undefined;
+  const fewLeft = ownedCards(c.p).length - removed.length <= 5;
+  return trashScore(c, left) >= 5 || fewLeft ? left.id : undefined;
 }
 
 /** 止まった位置での価値 */
 function valueAt(c: Ctx, w: Walk, flow: SCard[]): number {
   const pos = w.pos;
   const pw = cellPower(pos, c.s.board);
-  if (pw.kind === 'buy') return planBuy(c, pw.amount, pos.x).value + planRotate(c, flow).length * 3;
-  if (pw.kind === 'remove') return planRemove(c, flow, pw.amount, isDeep(pos.y, c.s.board), pos.x).value;
-  return 0;
+  const rb = c.p.perms.includes('ROOMBA') && flow.length ? 2 : 0;
+  if (pw.kind === 'buy') return planBuy(c, pw.amount, pos.x).value + rb;
+  if (pw.kind === 'remove') return planRemove(c, flow, pw.amount, isDeep(pos.y, c.s.board), pos.x).value + (flow.length > 1 ? rb : 0);
+  return rb;
 }
 
-const cloneWalk = (w: Walk): Walk => ({ board: w.board, pos: { ...w.pos }, lastDir: w.lastDir, blocks: w.blocks.map(b => ({ ...b })), traces: w.traces, trail: [] });
+const cloneWalk = (w: Walk): Walk => ({ board: w.board, pos: { ...w.pos }, lastDir: w.lastDir, blocks: w.blocks.map(b => ({ ...b })), traces: w.traces, perks: w.perks, trail: [] });
 
 function stopValue(c: Ctx, w: Walk, flow: SCard[]): number {
   return valueAt(c, w, flow);
@@ -139,7 +141,7 @@ function contValue(c: Ctx, w: Walk, flow: SCard[], deck: SCard[], depth: number)
   if (!deck.length) return 0;
   const groups = new Map<string, { card: SCard; n: number }>();
   for (const x of deck) {
-    const key = `${x.kind}${x.fav ? '*' : ''}`;
+    const key = x.kind;
     const g = groups.get(key);
     if (g) g.n++; else groups.set(key, { card: x, n: 1 });
   }
@@ -167,11 +169,11 @@ export function chooseSlideAction(s: SState, g: SGenome): SAction {
       return { type: 'stopper', cell: r.cell ?? null };
     }
     case 'resolve': {
-      if (isLastCard(p)) return { type: 'resolve', buy: [], remove: [p.flow[0].id], rotate: [] };
+      if (isLastCard(p)) return { type: 'resolve', buy: [], remove: [p.flow[0].id] };
       const pw = cellPower(w.pos, s.board);
-      if (pw.kind === 'buy') return { type: 'resolve', buy: planBuy(c, pw.amount, w.pos.x).buy, remove: [], rotate: planRotate(c, p.flow) };
-      if (pw.kind === 'remove') return { type: 'resolve', buy: [], remove: planRemove(c, p.flow, pw.amount, isDeep(w.pos.y, s.board), w.pos.x).remove, rotate: [] };
-      return { type: 'resolve', buy: [], remove: [], rotate: [] };
+      const remove = pw.kind === 'remove' ? planRemove(c, p.flow, pw.amount, isDeep(w.pos.y, s.board), w.pos.x).remove : [];
+      const buy = pw.kind === 'buy' ? planBuy(c, pw.amount, w.pos.x).buy : [];
+      return { type: 'resolve', buy, remove, roomba: planRoomba(c, p.flow, remove) };
     }
     case 'move': {
       if (!canFlip(p) || isLastCard(p)) return { type: 'stop' };

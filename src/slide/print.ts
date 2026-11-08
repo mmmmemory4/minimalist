@@ -4,7 +4,7 @@
 import './print.css';
 import { ARROW, LIGHT_PER, MARKET, MEMO_AT, SCARDS, SKind, STARTING, UNLIMITED_KINDS } from './cards';
 import {
-  BLOCKS, FINISH_FAVS, SBOARDS, SBoard, X_MAX, X_MIN, bonus, isDeep, noBlockZone, rowEffect, yMax, yMin,
+  BLOCKS, SBOARDS, SBoard, X_MAX, X_MIN, bonus, isDeep, noBlockZone, rowEffect, yMax, yMin,
 } from './engine';
 import { INK, colColor, colInk, needBadges, rowColor } from './colors';
 
@@ -28,7 +28,7 @@ function glyph(k: SKind): string {
     case 'step': return m.dirs.length === 4 ? '↑↓←→ 1' : m.dirs.map(d => `${ARROW[d]}${m.n}`).join(' / ') + (m.light ? '<small>＋身軽</small>' : '') + (m.stop ? '<small>で止まる</small>' : '');
     case 'slide': return `${ARROW[m.dir]}<small>ぶつかるまで滑る</small>`;
     case 'stopper': return '■<small>積み木を置く</small>';
-    case 'none': return '—';
+    case 'none': return SCARDS[k].perm ? '★<small>お気に入り（永続）</small>' : '—';
     case 'swing': return '↓2 / ↑1';
     case 'memo': return `↑1 → ↓3`;
     case 'path': return m.dirs.map(d => ARROW[d]).join('');
@@ -38,13 +38,12 @@ function glyph(k: SKind): string {
 function cardHTML(k: SKind, tag: string): string {
   const d = SCARDS[k];
   const start = d.cost === null;
-  return `<div class="pcard ${start ? 'start' : ''} ${d.favorite ? 'fav' : ''}">
-    ${d.rotatable ? `<div class="flip">★回すとお気に入り：好きな向きに1・排除できない</div>` : ''}
-    <div class="ph"><b>${d.favorite ? '★' : ''}${d.name}</b>${start ? '<span class="tag">初期</span>' : `<span class="cost">${d.cost}</span>`}</div>
+  return `<div class="pcard ${start ? 'start' : ''} ${d.perm ? 'fav' : ''}">
+    <div class="ph"><b>${d.perm ? '★' : ''}${d.name}</b>${start ? '<span class="tag">初期</span>' : `<span class="cost">${d.cost}</span>`}</div>
     <div class="pg">${glyph(k)}</div>
     <div class="pt">${d.text}</div>
     <div class="pn">${needBadges(k)}</div>
-    <div class="pf"><span>${tag}</span><span class="w" style="color:${INK.drop}">重さ${d.weight}</span></div>
+    <div class="pf"><span>${tag}</span>${d.perm ? '<span>取ったら自分の前へ</span>' : `<span class="w" style="color:${INK.drop}">重さ${d.weight}</span>`}</div>
   </div>`;
 }
 
@@ -119,17 +118,17 @@ function tokenPage(): string {
 function rulesPages(): string {
   const cardRows = (Object.keys(SCARDS) as SKind[]).map(k => {
     const d = SCARDS[k];
-    return `<tr><td>${d.favorite ? '★' : ''}${d.name}</td><td>${d.text}</td><td>${d.cost ?? '初期'}</td><td>${d.weight}</td><td>${needBadges(k)}</td></tr>`;
+    return `<tr><td>${d.perm ? '★' : ''}${d.name}</td><td>${d.text}</td><td>${d.cost ?? '初期'}</td><td>${d.perm ? '−' : d.weight}</td><td>${needBadges(k)}</td></tr>`;
   }).join('');
   return `<section class="page rules">
-    <h1>ミニマリスト <small>スライド版（試作 v0.4.1）</small></h1>
+    <h1>ミニマリスト <small>スライド版（試作 v0.5）</small></h1>
     <p class="lead">手札はありません．山札の上をめくるたびに，欲に流されてコマが動きます．好きなところで止めて，
       <b style="color:${INK.buy}">物欲</b>の行ならカードを取得，<b style="color:${INK.drop}">捨欲</b>の行なら今日めくったカードを排除．
-      デッキを0枚にするか，お気に入りだけ${FINISH_FAVS}枚以下にしたら達成です．</p>
+      カードを0枚にしたら達成です．★お気に入りは取ったら自分の前に置かれ，効果がずっと続きます（数えない）．</p>
     <h3>内容物（このデータで印刷するもの）</h3>
     <ul><li>個人ボード（人数分），コマ1個・片付けた跡${TRACES}個・ストッパーの積み木${BLOCKS}個（1人分）</li>
       <li>初期デッキ 1人5枚（欲しい2・ためらい1・迷い1・ガラクタ1）</li>
-      <li>市場：片付けたい（売り切れない．多めに），ほかは各種類 人数と同じ枚数（最低2枚）</li></ul>
+      <li>市場：片付けたい（売り切れない．多めに），ほかは各種類 人数と同じ枚数（最低2枚）．★お気に入り5種類も同じ枚数</li></ul>
     <h3>準備</h3>
     <ol><li>各自，個人ボードを置き，初期デッキ5枚を混ぜて山札にする．コマを START に置く</li>
       <li>市場のカードを種類ごとに表向きに並べる．最初の人を決める</li></ol>
@@ -141,17 +140,17 @@ function rulesPages(): string {
           <li>ボードの端では止まる．<b>積み木は壁：積み木のマスには入れず，その手前で止まる</b>（重ならない）</li></ul></li>
       <li><b>止める</b>：コマのいるマスの効果を使う．<span style="background:${colColor(2)}">衝動</span>の列は取得の額が増え，<span style="background:${colColor(-2)}">理性</span>の列は排除の量が増える（それ以外の効果はない）</li>
       <li>止まったマスの効果（マスの右下の数字）
-        <ul><li><b style="color:${INK.buy}">物欲</b>：その額までコストを払って市場からカードを取得し，捨札へ．今日の流れの愛用品を回して（上下逆さ）お気に入りにしてもよい</li>
+        <ul><li><b style="color:${INK.buy}">物欲</b>：その額までコストを払って市場からカードを取得し，捨札へ．<b>★お気に入りは自分の前に置く</b>（山札に入らない．同じものは1枚まで）</li>
           <li><b style="color:${INK.drop}">捨欲</b>：その量まで，<b>今日の流れ</b>のカードを重さを払って排除（箱へ）．一番下の行なら捨札からも1枚．
             排除したら，止まったマスに<b>片付けた跡</b>を1個置く．跡は残り続ける（排除するたびに増える．START の上下左右には置かない）</li></ul></li>
       <li>今日の流れのカードを捨札へ</li></ol>
     <h3>条件のあるカード（色の濃さ＝必要な段階）</h3>
     <ul><li><span class="badge" style="background:${colColor(2)};color:${INK.imp};border-color:${INK.imp}">衝動nで取得</span>：衝動n以上の列で止まらないと取得できない（高いもの・派手なものは衝動買い）</li>
       <li><span class="badge" style="background:${colColor(-2)};color:${INK.calm};border-color:${INK.calm}">理性nで排除</span>：理性n以上の列で止まらないと排除できない（思い入れのあるものは冷静に）</li>
-      <li>お気に入り（★一生モノ・回した愛用品）は排除できない．動きは「好きな向きに1」</li>
+      <li><b>★お気に入り</b>：ルンバ・大掃除の日・大容量ゴミ袋・スケート靴・コンパス．高いが，取ったら次の手番で勝ちうるくらい強い．効果はずっと続く．排除しなくてよい</li>
       <li><b>最後の1枚</b>：持ち物が今日めくった1枚だけなら，どこで止まってもその1枚を手放せる</li></ul>
     <h3>終わり</h3>
-    <p>手番の終わりに持ち物が0枚，またはお気に入りだけで${FINISH_FAVS}枚以下なら達成．誰かが達成したらそのラウンドの最後の人まで．
+    <p>手番の終わりにカード（山札・捨札・今日の流れ）が0枚なら達成（★お気に入りは数えない）．誰かが達成したらそのラウンドの最後の人まで．
       達成者のうち排除した枚数が多い人の勝ち（同じならお気に入りのコスト合計が高い人，それも同じなら共同勝利）．</p>
   </section>
   <section class="page rules">

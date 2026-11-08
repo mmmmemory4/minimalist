@@ -7,7 +7,7 @@ import { SPRESETS, playSlideTurn } from '../src/slide/bot';
 
 const SHORT = SBOARDS.basic, STD = SBOARDS.slow;
 const w0 = (blocks: { x: number; y: number }[] = [], board = SHORT): Walk => ({ board, pos: { x: 0, y: 0 }, lastDir: null, blocks, trail: [] });
-const card = (kind: keyof typeof SCARDS, id = 900, fav = false) => ({ id, kind, fav });
+const card = (kind: keyof typeof SCARDS, id = 900) => ({ id, kind });
 
 /** 現在の手番の人の山札の上を，指定のカードにする */
 function stack(s: SState, ...kinds: (keyof typeof SCARDS)[]) {
@@ -65,7 +65,7 @@ describe('スライド版', () => {
     p.discard = [card('WANT', 2)];
     applySlide(s, 0, { type: 'flip' });
     applySlide(s, 0, { type: 'stop' }); // (0,-1)
-    applySlide(s, 0, { type: 'resolve', buy: [], remove: [1], rotate: [] });
+    applySlide(s, 0, { type: 'resolve', buy: [], remove: [1] });
     expect(p.walk.traces).toEqual([]);
   });
 
@@ -79,23 +79,23 @@ describe('スライド版', () => {
     stack(s, 'WANT', 'WANT');
     applySlide(s, 0, { type: 'flip' });
     applySlide(s, 0, { type: 'stop' });
-    expect(() => applySlide(s, 0, { type: 'resolve', buy: ['SLIDE'], remove: [], rotate: [] })).toThrow(); // 物欲2で6は買えない
-    applySlide(s, 0, { type: 'resolve', buy: ['BREATH'], remove: [], rotate: [] });
+    expect(() => applySlide(s, 0, { type: 'resolve', buy: ['SLIDE'], remove: [] })).toThrow(); // 物欲2で6は買えない
+    applySlide(s, 0, { type: 'resolve', buy: ['BREATH'], remove: [] });
     expect(s.players[0].discard.some(c => c.kind === 'BREATH')).toBe(true);
 
     applySlide(s, 1, { type: 'flip' }); applySlide(s, 1, { type: 'stop' });
-    applySlide(s, 1, { type: 'resolve', buy: [], remove: [], rotate: [] });
+    applySlide(s, 1, { type: 'resolve', buy: [], remove: [] });
 
     stack(s, 'DOUBT', 'SLIDE', 'JUNK');
     for (let i = 0; i < 3; i++) applySlide(s, 0, { type: 'flip' });
     applySlide(s, 0, { type: 'stop' });
     const p = s.players[0];
     expect(p.walk.pos).toEqual({ x: -1, y: -4 }); // 理性1・一番下：量 3（理性1は上乗せなし）
-    expect(() => applySlide(s, 0, { type: 'resolve', buy: [], remove: p.flow.map(c => c.id), rotate: [] })).toThrow(); // 迷い1・滑り台1・ガラクタ2 = 4
+    expect(() => applySlide(s, 0, { type: 'resolve', buy: [], remove: p.flow.map(c => c.id) })).toThrow(); // 迷い1・滑り台1・ガラクタ2 = 4
     const ids = p.flow.filter(c => c.kind !== 'SLIDE').map(c => c.id); // 迷い1・ガラクタ2 = 3
-    const fromDiscard = p.discard.filter(c => !c.fav);
-    expect(() => applySlide(s, 0, { type: 'resolve', buy: [], remove: [...ids, fromDiscard[0].id, fromDiscard[1].id], rotate: [] })).toThrow();
-    applySlide(s, 0, { type: 'resolve', buy: [], remove: [...ids, fromDiscard[0].id], rotate: [] });
+    const fromDiscard = p.discard;
+    expect(() => applySlide(s, 0, { type: 'resolve', buy: [], remove: [...ids, fromDiscard[0].id, fromDiscard[1].id] })).toThrow();
+    applySlide(s, 0, { type: 'resolve', buy: [], remove: [...ids, fromDiscard[0].id] });
     expect(p.removed).toBe(3);
     expect(p.walk.traces).toEqual([{ x: -1, y: -4 }]); // 跡は残り続ける（排除するたびに増える）
     expect(p.walk.blocks).toEqual([]);
@@ -107,16 +107,16 @@ describe('スライド版', () => {
     applySlide(s, 0, { type: 'flip' });
     applySlide(s, 0, { type: 'flip' });
     applySlide(s, 0, { type: 'stop' }); // (0,2) 物欲3
-    expect(() => applySlide(s, 0, { type: 'resolve', buy: ['ICE'], remove: [], rotate: [] })).toThrow(/衝動1/);
-    applySlide(s, 0, { type: 'resolve', buy: ['DOWN2'], remove: [], rotate: [] });
+    expect(() => applySlide(s, 0, { type: 'resolve', buy: ['ICE'], remove: [] })).toThrow(/衝動1/);
+    applySlide(s, 0, { type: 'resolve', buy: ['DOWN2'], remove: [] });
     applySlide(s, 1, { type: 'flip' }); applySlide(s, 1, { type: 'stop' });
-    applySlide(s, 1, { type: 'resolve', buy: [], remove: [], rotate: [] });
+    applySlide(s, 1, { type: 'resolve', buy: [], remove: [] });
     stack(s, 'JUNK', 'DOWN2');
     applySlide(s, 0, { type: 'flip' });
     applySlide(s, 0, { type: 'flip' });
     applySlide(s, 0, { type: 'stop' }); // (0,-2) 捨欲2，理性0
     const junk = s.players[0].flow.find(c => c.kind === 'JUNK')!;
-    expect(() => applySlide(s, 0, { type: 'resolve', buy: [], remove: [junk.id], rotate: [] })).toThrow(/理性1/);
+    expect(() => applySlide(s, 0, { type: 'resolve', buy: [], remove: [junk.id] })).toThrow(/理性1/);
   });
 
   it('最後の1枚は，どこで止まっても手放せる．山札が尽きたら捨札を混ぜて続けられる', () => {
@@ -125,7 +125,7 @@ describe('スライド版', () => {
     p.deck = [card('JUNK', 1)];
     applySlide(s, 0, { type: 'flip' });
     applySlide(s, 0, { type: 'stop' });
-    applySlide(s, 0, { type: 'resolve', buy: [], remove: [1], rotate: [] });
+    applySlide(s, 0, { type: 'resolve', buy: [], remove: [1] });
     expect(p.finished).toBe(true);
     const t = newSlideGame([{ name: 'A' }], 6);
     const q = t.players[0];
@@ -137,14 +137,60 @@ describe('スライド版', () => {
     expect(q.deck.length + q.discard.length).toBe(1);
   });
 
-  it('お気に入りだけ3枚以下になったら達成．お気に入りは排除できない', () => {
+  it('お気に入りは自分の前に置かれ，山札に入らない．カード0枚で達成', () => {
+    const s = newSlideGame([{ name: 'A' }, { name: 'B' }], 3, { board: 'basic' });
+    const p = s.players[0];
+    stack(s, 'RUSH', 'UP2', 'UP2'); // →2・↑2・↑2 → (2,3) 物欲4+2=6
+    applySlide(s, 0, { type: 'flip' }); applySlide(s, 0, { type: 'branch', dir: 'R' });
+    applySlide(s, 0, { type: 'flip' }); applySlide(s, 0, { type: 'flip' });
+    applySlide(s, 0, { type: 'stop' });
+    expect(p.walk.pos).toEqual({ x: 2, y: 3 });
+    expect(() => applySlide(s, 0, { type: 'resolve', buy: ['COMPASS'], remove: [] })).toThrow(/超えて/); // 7
+    expect(() => applySlide(s, 0, { type: 'resolve', buy: ['BIGDAY', 'BIGDAY'], remove: [] })).toThrow(/1枚まで/);
+    applySlide(s, 0, { type: 'resolve', buy: ['SKATE'], remove: [] });
+    expect(p.perms).toEqual(['SKATE']);
+    expect(ownedCards(p).some(c => c.kind === 'SKATE')).toBe(false);
+    p.deck = []; p.discard = []; p.flow = [];
+    expect(isDone(p)).toBe(true);
+  });
+
+  it('スケート靴は↓で滑る．コンパスは好きな向き', () => {
+    const w = { ...w0(), perks: ['SKATE' as const] };
+    walk(w, 'D', 1);
+    expect(w.pos).toEqual({ x: 0, y: -4 });
     const s = newSlideGame([{ name: 'A' }], 3);
     const p = s.players[0];
-    p.deck = [card('FAV', 1, true), card('USED', 2, true)];
-    p.discard = [];
-    expect(isDone(p)).toBe(true);
-    p.deck.push(card('DOWN', 3));
-    expect(isDone(p)).toBe(false);
+    p.perms = ['COMPASS']; p.walk.perks = ['COMPASS'];
+    stack(s, 'WANT');
+    applySlide(s, 0, { type: 'flip' });
+    expect(s.turn).toBe('branch');
+    applySlide(s, 0, { type: 'branch', dir: 'D' });
+    expect(p.walk.pos).toEqual({ x: 0, y: -1 });
+  });
+
+  it('大掃除の日は量を無視，ゴミ袋は捨札からも，ルンバはどこでも1枚', () => {
+    const s = newSlideGame([{ name: 'A' }], 3, { board: 'basic' });
+    const p = s.players[0];
+    p.perms = ['BIGDAY', 'ROOMBA'];
+    stack(s, 'JUNK', 'DOWN', 'WANT', 'DOUBT', 'DOWN', 'DOWN'); // ←1 ↓1 ↑1 ... → (-1,-2)
+    for (let i = 0; i < 6; i++) applySlide(s, 0, { type: 'flip' });
+    applySlide(s, 0, { type: 'stop' });
+    expect(p.walk.pos).toEqual({ x: -1, y: -2 }); // 捨欲2
+    const flowIds = p.flow.map(c => c.id);
+    applySlide(s, 0, { type: 'resolve', buy: [], remove: flowIds });
+    expect(p.removed).toBe(6);
+
+    const t = newSlideGame([{ name: 'A' }], 4, { board: 'basic' });
+    const q = t.players[0];
+    q.perms = ['BAG', 'ROOMBA'];
+    q.discard = [card('WANT', 801), card('WANT', 802)];
+    q.deck = [card('DOWN', 803), card('HES', 804)].reverse();
+    applySlide(t, 0, { type: 'flip' }); // ↓1 (0,-1) 量1
+    applySlide(t, 0, { type: 'stop' });
+    expect(() => applySlide(t, 0, { type: 'resolve', buy: [], remove: [801, 802] })).toThrow(/超えて/);
+    applySlide(t, 0, { type: 'resolve', buy: [], remove: [801], roomba: 803 });
+    expect(q.removed).toBe(2);
+    expect(ownedCards(q).map(c => c.id).sort()).toEqual([802, 804]);
   });
 
   it('ボット同士のゲームは終わり，カードの総数が保存される', () => {
@@ -155,7 +201,7 @@ describe('スライド版', () => {
       const gs = Array.from({ length: n }, (_, i) => SPRESETS[kinds[(seed + i) % kinds.length]]);
       const s = newSlideGame(gs.map((_, i) => ({ name: `P${i}`, isBot: true })), seed, { board: seed % 2 ? 'slow' : 'basic' });
       while (s.phase === 'play') playSlideTurn(s, gs);
-      for (const p of s.players) expect(ownedCards(p).length + p.removed).toBe(5 + p.bought);
+      for (const p of s.players) expect(ownedCards(p).length + p.removed + p.perms.length).toBe(5 + p.bought);
       if (s.winners.length && s.board.name === 'basic') finished++; // ゆっくりの盤は v0.4 では長引く（仕様のmd）
     }
     expect(finished).toBeGreaterThan(17);
