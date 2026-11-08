@@ -66,8 +66,8 @@ export class SlideRoom extends DurableObject<Env> {
         case 'join': {
           if (!msg.token || msg.token.length > 64) throw new SRuleError('不正なトークン');
           ws.serializeAttachment({ token: msg.token } satisfies Attachment);
-          const name = (msg.name || 'プレイヤー').slice(0, 16);
           const existing = data.seats.find(s => s.token === msg.token);
+          const name = uniqueName(data.seats, msg.name, existing);
           if (existing) {
             existing.name = name;
             if (data.game) data.game.players[data.seats.indexOf(existing)].name = name;
@@ -76,6 +76,13 @@ export class SlideRoom extends DurableObject<Env> {
           }
           // 満席・開始後に来た人は観戦者
           if (!data.hostToken) data.hostToken = msg.token;
+          break;
+        }
+        case 'rename': {
+          if (seat < 0) throw new SRuleError('席がないので名前は変えられません');
+          const name = uniqueName(data.seats, msg.name, data.seats[seat]);
+          data.seats[seat].name = name;
+          if (data.game) data.game.players[seat].name = name;
           break;
         }
         case 'addBot': {
@@ -188,4 +195,14 @@ export class SlideRoom extends DurableObject<Env> {
   private send(ws: WebSocket, msg: SServerMsg): void {
     try { ws.send(JSON.stringify(msg)); } catch { /* 切断済み */ }
   }
+}
+
+/** 名前を整える：空なら「プレイヤーn」，ほかの席と同じなら番号をつける */
+function uniqueName(seats: Seat[], raw: unknown, self?: Seat): string {
+  const base = (typeof raw === 'string' ? raw : '').replace(/\s+/g, ' ').trim().slice(0, 12);
+  const taken = new Set(seats.filter(s => s !== self).map(s => s.name));
+  const custom = base && base !== 'プレイヤー';
+  if (custom && !taken.has(base)) return base;
+  const stem = custom ? base : 'プレイヤー';
+  for (let i = custom ? 2 : 1; ; i++) if (!taken.has(`${stem}${i}`)) return `${stem}${i}`;
 }

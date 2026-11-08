@@ -19,6 +19,8 @@ export interface SRoomInfo {
 
 export type SClientMsg =
   | { t: 'join'; name: string; token: string }
+  /** 待合室で自分の名前を変える */
+  | { t: 'rename'; name: string }
   | { t: 'addBot'; botType: string }
   | { t: 'removeSeat'; seat: number }
   /** set：カードセットの id．cards：自分で選んだカード（set = 'custom' のとき） */

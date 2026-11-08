@@ -28,6 +28,8 @@ const esc = (t: string) => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;
 
 interface Net { ws: WebSocket | null; code: string; token: string; name: string; room: SRoomInfo | null; closed: boolean }
 let net: Net | null = null;
+/** 待合室で書きかけの名前（描き直しで消えないように） */
+let nameDraft: string | null = null;
 
 function token(): string {
   let t = store.get('slide.token');
@@ -38,10 +40,11 @@ function token(): string {
 function goOnline(code: string, name: string) {
   code = code.trim().toUpperCase();
   if (!/^[A-Z0-9]{4,8}$/.test(code)) return alert('部屋コードは英数字4〜8文字です');
-  store.set('slide.name', name);
+  if (name) store.set('slide.name', name);
   clearTimeout(timer);
   s = null;
   net = { ws: null, code, token: token(), name, room: null, closed: false };
+  nameDraft = null;
   history.replaceState(null, '', `?room=${code}`);
   connect();
   render();
@@ -83,10 +86,14 @@ function lobby() {
   if (!room) { app.innerHTML = `<main class="setup"><p>部屋 ${esc(net!.code)} に接続しています…</p><button id="back">戻る</button></main>`; bindBack(); return; }
   const link = `${location.origin}${location.pathname}?room=${room.code}`;
   const opts = Object.keys(SPRESETS).map(k => `<option value="${k}">${SBOT_LABELS[k]}</option>`).join('');
+  const prev = document.activeElement as HTMLInputElement | null;
+  const caret = prev?.id === 'myname' ? prev.selectionStart : null;
   app.innerHTML = `
   <main class="setup">
     <h1>部屋 ${esc(room.code)}</h1>
     <p>この URL を送ると一緒に遊べます：<br><input class="link" readonly value="${esc(link)}"> <button id="copy">コピー</button></p>
+    ${room.you >= 0 ? `<p class="myname"><label>あなたの名前 <input id="myname" maxlength="12" value="${esc(nameDraft ?? room.seats[room.you].name)}" placeholder="名前を入力"></label>
+      <button id="rename">変更</button>${store.get('slide.name') ? '' : ' <span class="hint">← 名前を決めてください</span>'}</p>` : ''}
     <h3>参加者（${room.seats.length}/${SMAX_SEATS}）</h3>
     <ul class="seats">${room.seats.map((x, i) => `<li>${esc(x.name)}${i === room.you ? '（あなた）' : ''}${x.isBot || x.connected ? '' : ' <span class="muted">（切断中）</span>'}
       ${room.isHost && i !== room.you ? `<button data-remove="${i}">外す</button>` : ''}</li>`).join('')}</ul>
@@ -102,6 +109,22 @@ function lobby() {
   </main>`;
   bindOptions();
   bindBack();
+  const nameIn = app.querySelector<HTMLInputElement>('#myname');
+  if (nameIn) {
+    // 入力中に他の人が入ってきて描き直されても，書きかけとカーソルを保つ
+    if (caret !== null) { nameIn.focus(); nameIn.setSelectionRange(caret, caret); }
+    nameIn.oninput = () => { nameDraft = nameIn.value; };
+    const rename = () => {
+      const name = nameIn.value.trim();
+      if (!name) return nameIn.focus();
+      store.set('slide.name', name);
+      net!.name = name;
+      nameDraft = null;
+      send({ t: 'rename', name });
+    };
+    nameIn.onkeydown = e => { if (e.key === 'Enter') rename(); };
+    app.querySelector<HTMLButtonElement>('#rename')!.onclick = rename;
+  }
   app.querySelector<HTMLButtonElement>('#copy')?.addEventListener('click', () => navigator.clipboard?.writeText(link));
   app.querySelector<HTMLButtonElement>('#addBot')?.addEventListener('click', () => send({ t: 'addBot', botType: app.querySelector<HTMLSelectElement>('#botType')!.value }));
   app.querySelectorAll<HTMLButtonElement>('[data-remove]').forEach(b => b.onclick = () => send({ t: 'removeSeat', seat: +b.dataset.remove! }));
@@ -205,12 +228,13 @@ function setup() {
     <details><summary>ルールの要約</summary>${rulesHTML()}</details>
   </main>`;
   bindOptions();
-  const nameOf = () => app.querySelector<HTMLInputElement>('#name')!.value.trim() || 'あなた';
+  const rawName = () => app.querySelector<HTMLInputElement>('#name')!.value.trim();
+  const nameOf = () => rawName() || 'あなた';
   app.querySelector<HTMLButtonElement>('#create')!.onclick = () => {
     const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    goOnline(Array.from({ length: 5 }, () => abc[Math.floor(Math.random() * abc.length)]).join(''), nameOf());
+    goOnline(Array.from({ length: 5 }, () => abc[Math.floor(Math.random() * abc.length)]).join(''), rawName());
   };
-  app.querySelector<HTMLButtonElement>('#join')!.onclick = () => goOnline(app.querySelector<HTMLInputElement>('#code')!.value, nameOf());
+  app.querySelector<HTMLButtonElement>('#join')!.onclick = () => goOnline(app.querySelector<HTMLInputElement>('#code')!.value, rawName());
   app.querySelector<HTMLButtonElement>('#start')!.onclick = () => {
     const name = nameOf();
     botTypes = [...app.querySelectorAll<HTMLSelectElement>('#bots select')].map(x => x.value).filter(Boolean);
@@ -479,5 +503,6 @@ function botStep() {
 
 // ?room=XXXX で開かれたら，そのまま部屋に入る
 const initialRoom = new URLSearchParams(location.search).get('room');
-if (initialRoom) goOnline(initialRoom, store.get('slide.name') ?? 'プレイヤー');
+// 名前がまだなければ仮の名前（プレイヤーn）で入り，待合室で決めてもらう
+if (initialRoom) goOnline(initialRoom, store.get('slide.name') ?? '');
 else setup();
