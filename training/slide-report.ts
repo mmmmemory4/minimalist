@@ -4,12 +4,15 @@
 
 import { SCARDS, SKind } from '../src/slide/cards';
 import { SPRESETS, SBOT_LABELS, playSlideTurn } from '../src/slide/bot';
-import { SState, newSlideGame, ownedCards } from '../src/slide/engine';
+import { SBOARDS, SState, newSlideGame, ownedCards, setReasonBonus } from '../src/slide/engine';
 import { rngFrom } from './common';
 
 const GAMES = Number(process.argv[2] ?? 600);
 const ONLY = (process.env.TYPES ?? '').split(',').filter(Boolean);
 const BOARD = process.env.BOARD ?? 'basic';
+// 試しに理性の上乗せ・捨欲の目盛りを変える：RB=0,1,1 REM=1,1,2,3
+if (process.env.RB) setReasonBonus(process.env.RB.split(',').map(Number));
+if (process.env.REM) SBOARDS.basic.remove = process.env.REM.split(',').map(Number);
 // 試しにコストを変える：COSTS=CALM=3,DOWN2=3
 for (const kv of (process.env.COSTS ?? '').split(',').filter(Boolean)) { const [k, v] = kv.split('='); SCARDS[k as SKind].cost = Number(v); }
 
@@ -20,6 +23,7 @@ export function runReport(games: number, label = '') {
   const rounds: number[] = [], buys: Record<string, number[]> = {};
   const finishBy = { zero: 0, fav: 0 };
   let draws = 0;
+  const maxTr: number[] = [];
   // 止まった行・列：前半（ラウンド1〜4）と後半（5〜）
   const rowHist = { early: new Map<number, number>(), late: new Map<number, number>() };
   const colHist = { early: new Map<number, number>(), late: new Map<number, number>() };
@@ -44,6 +48,7 @@ export function runReport(games: number, label = '') {
       }
     }
     rounds.push(s.round);
+    for (const p of s.players) maxTr.push(p.walk.traces?.length ?? 0);
     s.players.forEach((p, i) => { (buys[who[i]] ??= []).push(p.bought); });
     who.forEach(w => { app[w] = (app[w] ?? 0) + 1; });
     if (!s.winners.length) { draws++; continue; }
@@ -59,6 +64,7 @@ export function runReport(games: number, label = '') {
   };
   console.log(`\n## ${label || `スライド版・盤 ${BOARD}`}（${games}試合，2〜4人）`);
   console.log(`平均ラウンド ${avg(rounds).toFixed(1)}，引分 ${Math.round(100 * draws / games)}%，達成の仕方 0枚 ${finishBy.zero} / お気に入り ${finishBy.fav}`);
+  console.log(`片付けた跡 平均${avg(maxTr).toFixed(1)}個・最大${Math.max(...maxTr)}個`);
   console.log('| 型 | 勝率倍率 | 取得/人 |');
   console.log('|---|---|---|');
   for (const w of names) console.log(`| ${SBOT_LABELS[w] ?? w} | ${((win[w] ?? 0) / (app[w] || 1)).toFixed(2)} | ${avg(buys[w]).toFixed(1)} |`);

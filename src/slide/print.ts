@@ -9,6 +9,8 @@ import {
 import { INK, colColor, colInk, needBadges, rowColor } from './colors';
 
 const app = document.getElementById('app')!;
+/** 片付けた跡の数（ボット同士では1人最大8個ほど） */
+const TRACES = 8;
 const params = new URLSearchParams(location.search);
 const opt = {
   players: Math.min(6, Math.max(2, Number(params.get('players') ?? 4))),
@@ -104,12 +106,12 @@ function tokenPage(): string {
   for (let p = 0; p < opt.players; p++) {
     const c = PLAYER_COLORS[p];
     h += `<div class="tokrow"><span class="tl">プレイヤー${p + 1}</span><span class="pawn" style="background:${c}"></span>`;
-    h += `<span class="blk trace" style="background:${c}">跡</span>`;
+    for (let i = 0; i < TRACES; i++) h += `<span class="blk trace" style="background:${c}">跡</span>`;
     for (let i = 0; i < BLOCKS; i++) h += `<span class="blk" style="background:${c}"></span>`;
     h += `</div>`;
   }
   return `<section class="page"><h2>コマと積み木<small>（切って使う．厚紙に貼るか，手持ちのコマ・おはじきで代用してよい）</small></h2>${h}
-    <p class="note">丸＝コマ（1人1個），「跡」＝片付けた跡（1人1個），無地の四角＝ストッパーの積み木（1人${BLOCKS}個）．</p></section>`;
+    <p class="note">丸＝コマ（1人1個），「跡」＝片付けた跡（1人${TRACES}個．足りなければ何で代用してもよい），無地の四角＝ストッパーの積み木（1人${BLOCKS}個）．</p></section>`;
 }
 
 // ---- ルール ----
@@ -120,12 +122,12 @@ function rulesPages(): string {
     return `<tr><td>${d.favorite ? '★' : ''}${d.name}</td><td>${d.text}</td><td>${d.cost ?? '初期'}</td><td>${d.weight}</td><td>${needBadges(k)}</td></tr>`;
   }).join('');
   return `<section class="page rules">
-    <h1>ミニマリスト <small>スライド版（試作 v0.4）</small></h1>
+    <h1>ミニマリスト <small>スライド版（試作 v0.4.1）</small></h1>
     <p class="lead">手札はありません．山札の上をめくるたびに，欲に流されてコマが動きます．好きなところで止めて，
       <b style="color:${INK.buy}">物欲</b>の行ならカードを取得，<b style="color:${INK.drop}">捨欲</b>の行なら今日めくったカードを排除．
       デッキを0枚にするか，お気に入りだけ${FINISH_FAVS}枚以下にしたら達成です．</p>
     <h3>内容物（このデータで印刷するもの）</h3>
-    <ul><li>個人ボード（人数分），コマ1個・片付けた跡1個・ストッパーの積み木${BLOCKS}個（1人分）</li>
+    <ul><li>個人ボード（人数分），コマ1個・片付けた跡${TRACES}個・ストッパーの積み木${BLOCKS}個（1人分）</li>
       <li>初期デッキ 1人5枚（欲しい2・ためらい1・迷い1・ガラクタ1）</li>
       <li>市場：片付けたい（売り切れない．多めに），ほかは各種類 人数と同じ枚数（最低2枚）</li></ul>
     <h3>準備</h3>
@@ -141,7 +143,7 @@ function rulesPages(): string {
       <li>止まったマスの効果（マスの右下の数字）
         <ul><li><b style="color:${INK.buy}">物欲</b>：その額までコストを払って市場からカードを取得し，捨札へ．今日の流れの愛用品を回して（上下逆さ）お気に入りにしてもよい</li>
           <li><b style="color:${INK.drop}">捨欲</b>：その量まで，<b>今日の流れ</b>のカードを重さを払って排除（箱へ）．一番下の行なら捨札からも1枚．
-            排除したら，<b>片付けた跡</b>を止まったマスへ移す（1人1個．次に排除するまでそのマスには入れない．START の上下左右で排除したら跡はボードから外す）</li></ul></li>
+            排除したら，止まったマスに<b>片付けた跡</b>を1個置く．跡は残り続ける（排除するたびに増える．START の上下左右には置かない）</li></ul></li>
       <li>今日の流れのカードを捨札へ</li></ol>
     <h3>条件のあるカード（色の濃さ＝必要な段階）</h3>
     <ul><li><span class="badge" style="background:${colColor(2)};color:${INK.imp};border-color:${INK.imp}">衝動nで取得</span>：衝動n以上の列で止まらないと取得できない（高いもの・派手なものは衝動買い）</li>

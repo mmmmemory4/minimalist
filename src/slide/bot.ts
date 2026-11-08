@@ -96,7 +96,7 @@ function valueAt(c: Ctx, w: Walk, flow: SCard[]): number {
   return 0;
 }
 
-const cloneWalk = (w: Walk): Walk => ({ board: w.board, pos: { ...w.pos }, lastDir: w.lastDir, blocks: w.blocks.map(b => ({ ...b })), trace: w.trace, trail: [] });
+const cloneWalk = (w: Walk): Walk => ({ board: w.board, pos: { ...w.pos }, lastDir: w.lastDir, blocks: w.blocks.map(b => ({ ...b })), traces: w.traces, trail: [] });
 
 function stopValue(c: Ctx, w: Walk, flow: SCard[]): number {
   return valueAt(c, w, flow);

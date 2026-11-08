@@ -41,17 +41,20 @@ export function rowEffect(y: number, b: SBoard): { kind: 'buy' | 'remove' | 'non
   return { kind: 'none', amount: 0 };
 }
 /** 列の上乗せ：衝動の列は取得の額に，理性の列は排除の量に（衝動買い／冷静な片付け） */
-export const bonus = (x: number, kind: 'buy' | 'remove') => (kind === 'buy' ? Math.max(0, x) : Math.max(0, -x));
+/** 理性の列の排除の上乗せ（理性1,2,3 → REASON_BONUS[0..2]） */
+export let REASON_BONUS = [0, 1, 1]; // v0.4.1：最初から量2・3に届かないように小さく
+export const setReasonBonus = (a: number[]) => { REASON_BONUS = a; };
+export const bonus = (x: number, kind: 'buy' | 'remove') => (kind === 'buy' ? Math.max(0, x) : x < 0 ? REASON_BONUS[-x - 1] : 0);
 
 export interface SCard { id: number; kind: SKind; fav: boolean }
 
 /** 手番中の動きの状態（ボットの先読みでも使う） */
-/** blocks はストッパーの積み木，trace は片付けた跡（1個だけ．排除するたびに止まったマスへ移す） */
-export interface Walk { board: SBoard; pos: Pos; lastDir: Dir | null; blocks: Pos[]; trace?: Pos | null; trail: Pos[] }
+/** blocks はストッパーの積み木，traces は片付けた跡（排除したマスに残り続ける．排除するたびに増える） */
+export interface Walk { board: SBoard; pos: Pos; lastDir: Dir | null; blocks: Pos[]; traces?: Pos[]; trail: Pos[] }
 
 /** 積み木のあるマス */
-export const hasBlock = (w: Walk, p: Pos) => w.blocks.some(b => samePos(b, p)) || (!!w.trace && samePos(w.trace, p));
-export const isTrace = (w: Walk, p: Pos) => !!w.trace && samePos(w.trace, p);
+export const isTrace = (w: Walk, p: Pos) => !!w.traces?.some(t => samePos(t, p));
+export const hasBlock = (w: Walk, p: Pos) => w.blocks.some(b => samePos(b, p)) || isTrace(w, p);
 /** 盤の外と積み木のマスへは入れない（その手前で止まる） */
 export const blocked = (w: Walk, p: Pos) => !inBoard(p, w.board) || hasBlock(w, p);
 
@@ -157,7 +160,7 @@ export type SAction =
 
 export class SRuleError extends Error {}
 
-const newWalk = (board: SBoard, blocks: Pos[], trace: Pos | null = null): Walk => ({ board, pos: { x: 0, y: 0 }, lastDir: null, blocks, trace, trail: [{ x: 0, y: 0 }] });
+const newWalk = (board: SBoard, blocks: Pos[], traces: Pos[] = []): Walk => ({ board, pos: { x: 0, y: 0 }, lastDir: null, blocks, traces, trail: [{ x: 0, y: 0 }] });
 
 export function newSlideGame(
   setup: { name: string; isBot?: boolean; botType?: string }[], seed: number, opts: { market?: SKind[]; board?: string } = {},
@@ -295,8 +298,8 @@ function resolve(s: SState, p: SPlayer, a: { buy: SKind[]; remove: number[]; rot
   p.flow = p.flow.filter(c => !gone.has(c.id));
   p.discard = p.discard.filter(c => !gone.has(c.id));
   p.removed += ids.length;
-  // 片付けた跡：次に排除するまで，このマスには入れない（START のまわりで排除したら跡は取り除く）
-  if (ids.length) p.walk.trace = noBlockZone(pos) ? null : { ...pos };
+  // 片付けた跡：排除したマスに残り続け，そのマスには入れない（START のまわりには置かない）
+  if (ids.length && !noBlockZone(pos)) (p.walk.traces ??= []).push({ ...pos });
 
   const where = `(${pos.x},${pos.y})`;
   const parts = [`${p.name}：${where}で止まった`];
@@ -340,7 +343,7 @@ function endTurn(s: SState, p: SPlayer): void {
 
 function startTurn(s: SState): void {
   const p = s.players[s.current];
-  p.walk = newWalk(s.board, p.walk.blocks, p.walk.trace ?? null);
+  p.walk = newWalk(s.board, p.walk.blocks, p.walk.traces ?? []);
   s.turn = 'move';
   if (p.deck.length === 0) reshuffle(s, p);
 }

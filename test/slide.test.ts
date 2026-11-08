@@ -49,15 +49,16 @@ describe('スライド版', () => {
     expect(cellPower({ x: 0, y: 0 }, SHORT).kind).toBe('none');
     expect(cellPower({ x: 0, y: -1 }, SHORT)).toEqual({ kind: 'remove', amount: 1 });
     expect(cellPower({ x: 1, y: -4 }, SHORT)).toEqual({ kind: 'remove', amount: 3 }); // 衝動は取得だけ
-    expect(cellPower({ x: -2, y: -1 }, SHORT)).toEqual({ kind: 'remove', amount: 3 }); // 理性は排除だけ
+    expect(cellPower({ x: -1, y: -1 }, SHORT)).toEqual({ kind: 'remove', amount: 1 }); // 理性1は上乗せなし
+    expect(cellPower({ x: -3, y: -1 }, SHORT)).toEqual({ kind: 'remove', amount: 2 }); // 理性2・3は+1（排除だけ）
     expect(cellPower({ x: -2, y: 1 }, SHORT)).toEqual({ kind: 'buy', amount: 2 });
     // ゆっくり：物欲 1,1,2,2,3,3,4／捨欲 0,1,1,2,3
     expect([1, 2, 3, 4, 5, 6, 7].map(y => cellPower({ x: 0, y }, STD).amount)).toEqual([1, 1, 2, 2, 3, 3, 4]);
     expect([-1, -2, -3, -4, -5].map(y => cellPower({ x: 0, y }, STD).amount)).toEqual([0, 1, 1, 2, 3]);
-    expect(cellPower({ x: -2, y: -1 }, STD)).toEqual({ kind: 'remove', amount: 2 }); // 捨欲0でも理性2なら2
+    expect(cellPower({ x: -2, y: -1 }, STD)).toEqual({ kind: 'remove', amount: 1 }); // 捨欲0でも理性2なら1
   });
 
-  it('片付けた跡は1個で，START のまわりには残らない', () => {
+  it('START のまわりで排除しても片付けた跡は残らない', () => {
     const s = newSlideGame([{ name: 'A' }], 7, { board: 'basic' });
     const p = s.players[0];
     p.deck = [card('DOWN', 1)];
@@ -65,7 +66,7 @@ describe('スライド版', () => {
     applySlide(s, 0, { type: 'flip' });
     applySlide(s, 0, { type: 'stop' }); // (0,-1)
     applySlide(s, 0, { type: 'resolve', buy: [], remove: [1], rotate: [] });
-    expect(p.walk.trace).toBeNull();
+    expect(p.walk.traces).toEqual([]);
   });
 
   it('道連れ袋は，もう1枚を重さ0にする', () => {
@@ -89,13 +90,14 @@ describe('スライド版', () => {
     for (let i = 0; i < 3; i++) applySlide(s, 0, { type: 'flip' });
     applySlide(s, 0, { type: 'stop' });
     const p = s.players[0];
-    expect(p.walk.pos).toEqual({ x: -1, y: -4 }); // 理性1・一番下：量 3+1
-    const ids = p.flow.map(c => c.id); // 迷い1・滑り台1・ガラクタ2 = 4
+    expect(p.walk.pos).toEqual({ x: -1, y: -4 }); // 理性1・一番下：量 3（理性1は上乗せなし）
+    expect(() => applySlide(s, 0, { type: 'resolve', buy: [], remove: p.flow.map(c => c.id), rotate: [] })).toThrow(); // 迷い1・滑り台1・ガラクタ2 = 4
+    const ids = p.flow.filter(c => c.kind !== 'SLIDE').map(c => c.id); // 迷い1・ガラクタ2 = 3
     const fromDiscard = p.discard.filter(c => !c.fav);
     expect(() => applySlide(s, 0, { type: 'resolve', buy: [], remove: [...ids, fromDiscard[0].id, fromDiscard[1].id], rotate: [] })).toThrow();
     applySlide(s, 0, { type: 'resolve', buy: [], remove: [...ids, fromDiscard[0].id], rotate: [] });
-    expect(p.removed).toBe(4);
-    expect(p.walk.trace).toEqual({ x: -1, y: -4 });
+    expect(p.removed).toBe(3);
+    expect(p.walk.traces).toEqual([{ x: -1, y: -4 }]); // 跡は残り続ける（排除するたびに増える）
     expect(p.walk.blocks).toEqual([]);
   });
 

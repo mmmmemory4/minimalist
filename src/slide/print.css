@@ -46,7 +46,8 @@ body { margin: 0; color: #222; font-family: "Noto Sans JP", "Hiragino Sans", "Yu
 .pboard .bc .st { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 8pt; border: 0.6mm solid #222; border-radius: 1mm; }
 
 /* コマと積み木 */
-.tokrow { display: flex; align-items: center; gap: 4mm; margin: 4mm 0; }
+.tokrow { display: flex; flex-wrap: wrap; align-items: center; gap: 3mm; margin: 4mm 0; }
+.tokrow > * { flex-shrink: 0; }
 .tokrow .tl { width: 26mm; font-weight: 700; }
 .tokrow .pawn { width: 16mm; height: 16mm; border-radius: 50%; border: 0.4mm dashed #333; }
 .tokrow .blk { width: 13mm; height: 13mm; border: 0.4mm dashed #333; }
