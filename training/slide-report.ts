@@ -2,7 +2,7 @@
 // 型（勝ち筋）を混ぜた2〜4人卓を回し，ゲームの長さ・引き分け・取得枚数・勝率倍率（1.00 = 公平）・
 // 止まった行と列（序盤と終盤）・達成の仕方（0枚／お気に入り）を表にする
 
-import { SCARDS, SKind } from '../src/slide/cards';
+import { SCARDS, SKind, marketFromChoice } from '../src/slide/cards';
 import { SPRESETS, SBOT_LABELS, playSlideTurn } from '../src/slide/bot';
 import { SBOARDS, SState, newSlideGame, ownedCards, setReasonBonus } from '../src/slide/engine';
 import { rngFrom } from './common';
@@ -33,7 +33,7 @@ export function runReport(games: number, label = '') {
     const n = 2 + (g % 3);
     const who = Array.from({ length: n }, () => names[Math.floor(rand() * names.length)]);
     const gs = who.map(w => SPRESETS[w]);
-    const s: SState = newSlideGame(who.map((w, i) => ({ name: `${w}${i}`, isBot: true })), g * 7919 + 5, { board: BOARD });
+    const s: SState = newSlideGame(who.map((w, i) => ({ name: `${w}${i}`, isBot: true })), g * 7919 + 5, { board: BOARD, market: process.env.SET ? marketFromChoice(process.env.SET, rand) : undefined });
     while (s.phase === 'play') {
       const before = s.log.length;
       const round = s.round;

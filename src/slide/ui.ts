@@ -1,7 +1,8 @@
-// スライド版の試作画面（ローカルでボットと遊ぶ．オンライン対戦はまだない）
+// スライド版の画面：ローカル（ボットと）とオンライン（部屋コードで人と．ボットも入れられる）
 
 import './ui.css';
-import { ARROW, Dir, SCARDS, SKind, canBuyAt, canDropAt, needText } from './cards';
+import { ARROW, CARD_SETS, Dir, MARKET, SCARDS, SKind, UNLIMITED_KINDS, canBuyAt, canDropAt, marketFromChoice, needText } from './cards';
+import { SMAX_SEATS, SRoomInfo, SServerMsg } from './protocol';
 import {
   DEFAULT_BOARD, SBOARDS, SCard, SPlayer, SState, Walk, X_MAX, X_MIN, applySlide, bonus, cellPower,
   canFlip, choicesFor, favCost, isLastCard, hasBlock, isTrace, discardLimit, isDeep, newSlideGame, ownedCards, removeLoad, rowEffect, samePos, stopperCells, yMax, yMin,
@@ -23,38 +24,194 @@ const sel = { buy: [] as SKind[], remove: new Set<number>(), roomba: null as num
 
 const esc = (t: string) => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
+// ---- オンライン ----
+
+interface Net { ws: WebSocket | null; code: string; token: string; name: string; room: SRoomInfo | null; closed: boolean }
+let net: Net | null = null;
+
+function token(): string {
+  let t = store.get('slide.token');
+  if (!t) { t = Math.random().toString(36).slice(2) + Date.now().toString(36); store.set('slide.token', t); }
+  return t;
+}
+
+function goOnline(code: string, name: string) {
+  code = code.trim().toUpperCase();
+  if (!/^[A-Z0-9]{4,8}$/.test(code)) return alert('部屋コードは英数字4〜8文字です');
+  store.set('slide.name', name);
+  clearTimeout(timer);
+  s = null;
+  net = { ws: null, code, token: token(), name, room: null, closed: false };
+  history.replaceState(null, '', `?room=${code}`);
+  connect();
+  render();
+}
+
+function connect() {
+  const n = net;
+  if (!n) return;
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/slide/${n.code}/ws`);
+  n.ws = ws;
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name: n.name, token: n.token }));
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data) as SServerMsg;
+    if (m.t === 'error') { alert(m.message); return; }
+    const prevKey = s ? `${s.current}-${s.round}-${s.turn}` : '';
+    n.room = m.room;
+    s = m.state;
+    me = m.room.you;
+    if (!s || `${s.current}-${s.round}-${s.turn}` !== prevKey) { sel.buy = []; sel.remove.clear(); sel.roomba = null; }
+    render();
+  };
+  ws.onclose = () => { if (net === n && !n.closed) setTimeout(connect, 1500); };
+}
+
+function send(msg: object) {
+  if (net?.ws?.readyState === WebSocket.OPEN) net.ws.send(JSON.stringify(msg));
+  else alert('接続中です．少し待ってからもう一度');
+}
+
+function leaveOnline() {
+  if (net) { net.closed = true; net.ws?.close(); }
+  net = null;
+  history.replaceState(null, '', location.pathname);
+}
+
+/** 部屋の待合室（ゲーム開始前） */
+function lobby() {
+  const room = net!.room;
+  if (!room) { app.innerHTML = `<main class="setup"><p>部屋 ${esc(net!.code)} に接続しています…</p><button id="back">戻る</button></main>`; bindBack(); return; }
+  const link = `${location.origin}${location.pathname}?room=${room.code}`;
+  const opts = Object.keys(SPRESETS).map(k => `<option value="${k}">${SBOT_LABELS[k]}</option>`).join('');
+  app.innerHTML = `
+  <main class="setup">
+    <h1>部屋 ${esc(room.code)}</h1>
+    <p>この URL を送ると一緒に遊べます：<br><input class="link" readonly value="${esc(link)}"> <button id="copy">コピー</button></p>
+    <h3>参加者（${room.seats.length}/${SMAX_SEATS}）</h3>
+    <ul class="seats">${room.seats.map((x, i) => `<li>${esc(x.name)}${i === room.you ? '（あなた）' : ''}${x.isBot || x.connected ? '' : ' <span class="muted">（切断中）</span>'}
+      ${room.isHost && i !== room.you ? `<button data-remove="${i}">外す</button>` : ''}</li>`).join('')}</ul>
+    ${room.you < 0 ? '<p class="muted">満席のため観戦になります</p>' : ''}
+    ${room.isHost ? `
+      <p><select id="botType">${opts}</select> <button id="addBot" ${room.seats.length >= SMAX_SEATS ? 'disabled' : ''}>ボットを追加</button></p>
+      ${optionsHTML()}
+      <button id="start" class="primary" ${room.seats.length < 2 ? 'disabled' : ''}>ゲーム開始</button>
+      ${room.seats.length < 2 ? '<p class="muted">2人以上（ボットを含む）で始められます</p>' : ''}`
+    : '<p class="muted">ホストが開始するのを待っています…</p>'}
+    <p><button id="back">部屋を出る</button></p>
+    <details><summary>ルールの要約</summary>${rulesHTML()}</details>
+  </main>`;
+  bindOptions();
+  bindBack();
+  app.querySelector<HTMLButtonElement>('#copy')?.addEventListener('click', () => navigator.clipboard?.writeText(link));
+  app.querySelector<HTMLButtonElement>('#addBot')?.addEventListener('click', () => send({ t: 'addBot', botType: app.querySelector<HTMLSelectElement>('#botType')!.value }));
+  app.querySelectorAll<HTMLButtonElement>('[data-remove]').forEach(b => b.onclick = () => send({ t: 'removeSeat', seat: +b.dataset.remove! }));
+  app.querySelector<HTMLButtonElement>('#start')?.addEventListener('click', () => {
+    const o = readOptions();
+    if (!o) return;
+    send({ t: 'start', board: o.board, set: o.set, cards: o.cards });
+  });
+}
+
+function bindBack() {
+  app.querySelector<HTMLButtonElement>('#back')?.addEventListener('click', () => { leaveOnline(); setup(); });
+}
+
+// ---- 盤とカードセットの選択（ローカル・オンライン共通） ----
+
+function optionsHTML(): string {
+  const set = store.get('slide.set') ?? 'all';
+  const custom = new Set((store.get('slide.cards') ?? MARKET.join(',')).split(','));
+  return `
+    <label>盤 <select id="board">${Object.values(SBOARDS).map(b => `<option value="${b.name}" ${b.name === (store.get('slide.board') ?? DEFAULT_BOARD) ? 'selected' : ''}>${b.label}</option>`).join('')}</select></label>
+    <label>市場のカードセット <select id="set">${CARD_SETS.map(c => `<option value="${c.id}" ${c.id === set ? 'selected' : ''}>${c.label}</option>`).join('')}
+      <option value="custom" ${set === 'custom' ? 'selected' : ''}>自分で選ぶ</option></select></label>
+    <div id="setInfo" class="setinfo"></div>
+    <div id="custom" class="custom" ${set === 'custom' ? '' : 'hidden'}>${MARKET.map(k => `<label class="ck"><input type="checkbox" value="${k}" ${custom.has(k) || UNLIMITED_KINDS.includes(k) ? 'checked' : ''} ${UNLIMITED_KINDS.includes(k) ? 'disabled' : ''}>${SCARDS[k].perm ? '★' : ''}${SCARDS[k].name}<small>${SCARDS[k].cost}</small></label>`).join('')}</div>`;
+}
+
+function bindOptions() {
+  const setSel = app.querySelector<HTMLSelectElement>('#set');
+  if (!setSel) return;
+  const info = () => {
+    const v = setSel.value;
+    app.querySelector<HTMLElement>('#custom')!.hidden = v !== 'custom';
+    const cs = CARD_SETS.find(c => c.id === v);
+    const list = cs && cs.cards.length ? `<br>${cs.cards.map(k => `${SCARDS[k].perm ? '★' : ''}${SCARDS[k].name}`).join('・')}` : '';
+    app.querySelector<HTMLElement>('#setInfo')!.innerHTML = v === 'custom' ? '片付けたいは必ず入ります．ほかに4種類以上' : `${cs?.note ?? ''}${list}`;
+  };
+  // 選んだものはすぐ保存する（部屋では人が入るたびに画面を描き直すので）
+  setSel.onchange = () => { store.set('slide.set', setSel.value); info(); };
+  const boardSel = app.querySelector<HTMLSelectElement>('#board')!;
+  boardSel.onchange = () => store.set('slide.board', boardSel.value);
+  app.querySelectorAll<HTMLInputElement>('#custom input').forEach(x => x.onchange = () =>
+    store.set('slide.cards', [...app.querySelectorAll<HTMLInputElement>('#custom input:checked')].map(y => y.value).join(',')));
+  info();
+}
+
+/** 選んだ盤・カードセット（不正なら null） */
+function readOptions(): { board: string; set: string; cards?: SKind[]; market: SKind[] } | null {
+  const board = app.querySelector<HTMLSelectElement>('#board')!.value;
+  const set = app.querySelector<HTMLSelectElement>('#set')!.value;
+  const cards = [...app.querySelectorAll<HTMLInputElement>('#custom input:checked')].map(x => x.value as SKind);
+  let market: SKind[];
+  try { market = marketFromChoice(set === 'custom' ? cards : set); } catch (e) { alert((e as Error).message); return null; }
+  store.set('slide.board', board);
+  store.set('slide.set', set);
+  if (set === 'custom') store.set('slide.cards', cards.join(','));
+  return { board, set, cards: set === 'custom' ? cards : undefined, market };
+}
+
 // ---- 開始画面 ----
 
 function setup() {
   clearTimeout(timer);
   s = null;
+  me = 0;
   const saved = (store.get('slide.bots') ?? 'light,slide').split(',');
   const opts = (v: string) => Object.keys(SPRESETS).map(k => `<option value="${k}" ${k === v ? 'selected' : ''}>${SBOT_LABELS[k]}</option>`).join('');
   app.innerHTML = `
   <main class="setup">
     <h1>ミニマリスト <small>スライド版（試作）</small></h1>
     <p>手札はありません．山札の上をめくるたびに，欲に流されてコマが動きます．好きなところで止めて，
-      <b>物欲</b>の行ならカードを取得，<b>捨欲</b>の行なら今日めくったカードを排除．デッキを0枚にするか，
-      <b>お気に入りだけ3枚以下</b>にしたら達成です．</p>
-    <label>盤 <select id="board">${Object.values(SBOARDS).map(b => `<option value="${b.name}" ${b.name === (store.get('slide.board') ?? DEFAULT_BOARD) ? 'selected' : ''}>${b.label}</option>`).join('')}</select></label>
+      <b>物欲</b>の行ならカードを取得，<b>捨欲</b>の行なら今日めくったカードを排除．カードを0枚にしたら達成です．
+      ★お気に入りは取ったら自分の前に置かれ，効果がずっと続きます．</p>
     <label>あなたの名前 <input id="name" value="${esc(store.get('slide.name') ?? 'あなた')}" maxlength="12"></label>
-    <div id="bots">${[0, 1, 2].map(i => `<label>ボット${i + 1}
-      <select data-i="${i}"><option value="">なし</option>${opts(saved[i] ?? '')}</select></label>`).join('')}</div>
-    <button id="start" class="primary">はじめる</button>
+    <section class="box">
+      <h3>人と遊ぶ（オンライン）</h3>
+      <p class="muted">部屋を作って URL を送るか，教えてもらった部屋コードで入ります．ボットも入れられます．盤とカードセットは部屋を作った人が開始時に選びます</p>
+      <button id="create" class="primary">部屋を作る</button>
+      <input id="code" maxlength="8" placeholder="部屋コード" value="${esc(new URLSearchParams(location.search).get('room') ?? '')}"> <button id="join">入る</button>
+    </section>
+    <section class="box">
+      <h3>ボットと遊ぶ（この端末だけ）</h3>
+      <div id="bots">${[0, 1, 2].map(i => `<label>ボット${i + 1}
+        <select data-i="${i}"><option value="">なし</option>${opts(saved[i] ?? '')}</select></label>`).join('')}</div>
+      ${optionsHTML()}
+      <button id="start" class="primary">はじめる</button>
+    </section>
     <details><summary>ルールの要約</summary>${rulesHTML()}</details>
   </main>`;
+  bindOptions();
+  const nameOf = () => app.querySelector<HTMLInputElement>('#name')!.value.trim() || 'あなた';
+  app.querySelector<HTMLButtonElement>('#create')!.onclick = () => {
+    const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    goOnline(Array.from({ length: 5 }, () => abc[Math.floor(Math.random() * abc.length)]).join(''), nameOf());
+  };
+  app.querySelector<HTMLButtonElement>('#join')!.onclick = () => goOnline(app.querySelector<HTMLInputElement>('#code')!.value, nameOf());
   app.querySelector<HTMLButtonElement>('#start')!.onclick = () => {
-    const name = app.querySelector<HTMLInputElement>('#name')!.value.trim() || 'あなた';
+    const name = nameOf();
     botTypes = [...app.querySelectorAll<HTMLSelectElement>('#bots select')].map(x => x.value).filter(Boolean);
     if (!botTypes.length) botTypes = ['light'];
+    const o = readOptions();
+    if (!o) return;
     store.set('slide.name', name);
     store.set('slide.bots', botTypes.join(','));
-    const board = app.querySelector<HTMLSelectElement>('#board')!.value;
-    store.set('slide.board', board);
-    s = newSlideGame([{ name }, ...botTypes.map(t => ({ name: SBOT_LABELS[t], isBot: true, botType: t }))], randomSeed(), { board });
+    localMarket = o.market;
+    s = newSlideGame([{ name }, ...botTypes.map(t => ({ name: SBOT_LABELS[t], isBot: true, botType: t }))], randomSeed(), { board: o.board, market: o.market });
     render();
   };
 }
+let localMarket: SKind[] | undefined;
 
 function rulesHTML() {
   return `<ul>
@@ -73,7 +230,7 @@ function rulesHTML() {
 
 // ---- ゲーム画面 ----
 
-const me = 0;
+let me = 0;
 const cur = () => s!.players[s!.current];
 
 function rowLabel(y: number) {
@@ -124,10 +281,11 @@ function cardHTML(c: SCard | { kind: SKind; id?: number }, extra = '', cls = '')
 }
 
 function render() {
+  if (net && !s) return lobby();
   if (!s) return setup();
   const p = cur();
   const mine = s.current === me && s.phase === 'play';
-  const human = s.players[me];
+  const human = s.players[Math.max(0, me)];
   let clickCells: { x: number; y: number }[] = [];
   let preview: { x: number; y: number } | undefined;
   if (mine && s.turn === 'stopper') clickCells = stopperCells(p.walk);
@@ -136,7 +294,8 @@ function render() {
   app.innerHTML = `
   <header><b>ミニマリスト スライド版</b> <span>ラウンド ${s.round}</span>
     <span class="turnof">${s.phase === 'over' ? 'ゲーム終了' : `${esc(p.name)}の手番`}</span>
-    <button id="quit">やめる</button></header>
+    ${net ? `<span class="muted">部屋 ${esc(net.code)}${me < 0 ? '（観戦中）' : ''}</span>` : ''}
+    <button id="quit">${net ? '部屋を出る' : 'やめる'}</button></header>
   <main class="game">
     <section class="left">
       ${boardHTML(s.current === me || s.phase === 'over' ? human : p, true, clickCells, preview)}
@@ -161,9 +320,9 @@ function render() {
       <ol class="log">${s.log.slice(-14).reverse().map(l => `<li>${esc(l)}</li>`).join('')}</ol>
     </section>
   </main>`;
-  app.querySelector<HTMLButtonElement>('#quit')!.onclick = () => { if (s?.phase === 'over' || confirm('ゲームをやめますか？')) setup(); };
+  app.querySelector<HTMLButtonElement>('#quit')!.onclick = () => { if (s?.phase === 'over' || confirm(net ? '部屋を出ますか？（あとで同じ URL から戻れます）' : 'ゲームをやめますか？')) { leaveOnline(); setup(); } };
   bindControls(clickCells);
-  if (s.phase === 'play' && cur().isBot) {
+  if (!net && s.phase === 'play' && cur().isBot) {
     clearTimeout(timer);
     timer = window.setTimeout(botStep, s.turn === 'resolve' ? 700 : 380);
   }
@@ -195,7 +354,7 @@ function controlsHTML(): string {
   if (st.phase === 'over') {
     return `<p class="big">${st.winners.length ? `${st.winners.map(i => esc(st.players[i].name)).join('・')}の${st.winners.length > 1 ? '共同勝利' : '勝利'}！` : '引き分け'}</p>
       <p>${st.players.map(q => `${esc(q.name)}：排除${q.removed}枚・お気に入り${favCost(q)}`).join('<br>')}</p>
-      <button id="again" class="primary">もう一度</button>`;
+      ${net && !net.room?.isHost ? '<p class="muted">ホストが再戦を選べます</p>' : '<button id="again" class="primary">もう一度</button>'}`;
   }
   const p = cur();
   if (st.current !== me) return `<p>${esc(p.name)}が考えています…</p>`;
@@ -246,6 +405,11 @@ function controlsHTML(): string {
 }
 
 function act(a: Parameters<typeof applySlide>[2]) {
+  if (net) {
+    send({ t: 'action', action: a });
+    if (a.type === 'resolve') { sel.buy = []; sel.remove.clear(); sel.roomba = null; }
+    return;
+  }
   try {
     applySlide(s!, me, a);
     if (a.type === 'resolve' || s!.turn === 'resolve') { sel.buy = []; sel.remove.clear(); sel.roomba = null; }
@@ -256,7 +420,8 @@ function act(a: Parameters<typeof applySlide>[2]) {
 function bindControls(clickCells: { x: number; y: number }[]) {
   const q = <T extends HTMLElement>(sel: string) => app.querySelector<T>(sel);
   q('#again')?.addEventListener('click', () => {
-    s = newSlideGame(s!.players.map(p => ({ name: p.name, isBot: p.isBot, botType: p.botType })), randomSeed(), { board: s!.board.name });
+    if (net) return send({ t: 'restart' });
+    s = newSlideGame(s!.players.map(p => ({ name: p.name, isBot: p.isBot, botType: p.botType })), randomSeed(), { board: s!.board.name, market: localMarket });
     render();
   });
   q('#flip')?.addEventListener('click', () => act({ type: 'flip' }));
@@ -296,4 +461,7 @@ function botStep() {
   render();
 }
 
-setup();
+// ?room=XXXX で開かれたら，そのまま部屋に入る
+const initialRoom = new URLSearchParams(location.search).get('room');
+if (initialRoom) goOnline(initialRoom, store.get('slide.name') ?? 'プレイヤー');
+else setup();

@@ -87,3 +87,15 @@ header #quit { margin-left: auto; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .board .colh, :root:not([data-theme="light"]) .board .rowh { color: var(--ink) !important; }
 }
+
+/* 開始画面・部屋 */
+.setup .box { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin: 14px 0; }
+.setup .box h3 { margin-top: 4px; }
+.setup input.link { width: min(100%, 420px); }
+.setup .seats { padding-left: 20px; }
+.setup .seats li { margin: 4px 0; }
+.setinfo { font-size: 12px; color: var(--muted); margin: -4px 0 8px; }
+.custom { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 4px 0 12px; }
+.setup .custom label.ck { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
+.custom small { margin-left: 2px; }
+.custom[hidden] { display: none; }

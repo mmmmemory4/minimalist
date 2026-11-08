@@ -100,3 +100,39 @@ export function needText(k: SKind): string {
   const d = SCARDS[k];
   return [d.buyNeed ? `取得は衝動${d.buyNeed}以上` : '', d.dropNeed ? `排除は理性${d.dropNeed}以上` : ''].filter(Boolean).join('・');
 }
+
+// ---- 市場に並べるカードのセット（開始時に選ぶ）．片付けたいは必ず入る ----
+
+export interface CardSet { id: string; label: string; note: string; cards: SKind[] }
+export const CARD_SETS: CardSet[] = [
+  { id: 'intro', label: '入門', note: '↓と2マスのカード中心．お気に入りは大掃除の日・スケート靴',
+    cards: ['DOWN', 'DOWN2', 'BR', 'BREATH', 'UP2', 'RUSH', 'CALM', 'STOP', 'BIGDAY', 'SKATE'] },
+  { id: 'light', label: '身軽と道連れ', note: '排除するほど軽くなる．お気に入りはルンバ・大容量ゴミ袋',
+    cards: ['DOWN', 'BR', 'BREATH', 'UP2', 'RUSH', 'CALM', 'LIGHT', 'DRAG', 'STOP', 'ROOMBA', 'BAG'] },
+  { id: 'slide', label: '滑走', note: '滑り台・氷の廊下で一気に動く．お気に入りはスケート靴・コンパス',
+    cards: ['DOWN', 'DOWN2', 'UP2', 'RUSH', 'CALM', 'SLIDE', 'ICE', 'STOP', 'SKATE', 'COMPASS'] },
+  { id: 'swing', label: '揺り戻しと思い出', note: '場所や枚数で動きが変わる．お気に入りは大掃除の日・ルンバ',
+    cards: ['DOWN', 'DOWN2', 'BR', 'UP2', 'RUSH', 'SWING', 'MEMO', 'STOP', 'BIGDAY', 'ROOMBA'] },
+  { id: 'all', label: 'すべて', note: `全${MARKET.length}種類`, cards: [...MARKET] },
+  { id: 'random', label: 'ランダム', note: '片付けたい＋ふつうのカード7種＋お気に入り2種をくじで', cards: [] },
+];
+
+/** 選んだセット（id）またはカードの一覧から市場を作る．rand はランダムのときに使う */
+export function marketFromChoice(choice: string | SKind[], rand: () => number = Math.random): SKind[] {
+  if (typeof choice === 'string') {
+    if (choice === 'random') {
+      const pick = (xs: SKind[], n: number) => { const a = [...xs]; const out: SKind[] = []; while (out.length < n && a.length) out.push(a.splice(Math.floor(rand() * a.length), 1)[0]); return out; };
+      const normal = MARKET.filter(k => !isPerm(k) && !UNLIMITED_KINDS.includes(k));
+      return orderMarket(['DOWN', ...pick(normal, 7), ...pick(PERMS, 2)]);
+    }
+    const set = CARD_SETS.find(x => x.id === choice);
+    if (!set) throw new Error('そのカードセットはありません');
+    return orderMarket(set.cards);
+  }
+  const ks = [...new Set(choice)].filter(k => MARKET.includes(k));
+  if (ks.length !== new Set(choice).size) throw new Error('市場にないカードが含まれています');
+  if (!ks.includes('DOWN')) ks.unshift('DOWN');
+  if (ks.length < 5) throw new Error('片付けたいのほかに4種類以上選んでください');
+  return orderMarket(ks);
+}
+const orderMarket = (ks: SKind[]) => MARKET.filter(k => ks.includes(k));

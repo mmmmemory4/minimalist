@@ -1,7 +1,9 @@
 # ミニマリスト オンライン
 
 > **slide ブランチ**：トップページは「スライド版」の試作（手札なし．山札の上をめくってコマを動かす）．
-> コードは `src/slide/`，公開先は https://minimalist-online-slide.garireonetk.workers.dev （push で自動デプロイ．ボット対戦のみ）．
+> コードは `src/slide/`，公開先は https://minimalist-online-slide.garireonetk.workers.dev （push で自動デプロイ）．
+> オンライン対戦：部屋は Durable Object `SlideRoom`（`worker/slideRoom.ts`，`/api/slide/:code/ws`）．通し確認は `npx wrangler dev --port 8799` のあと `npx tsx scripts/slide-online-smoke.ts`．
+> 市場のカードセットは `CARD_SETS`（`src/slide/cards.ts`）．`SET=intro npx tsx training/slide-report.ts` でセットごとに検証できる．
 > 仕様と検証結果は Obsidian の `ミニマリスト_スライド版_仕様.md`．検証：`npx tsx training/slide-report.ts 600`（`BOARD=slow` で盤を変える）．
 > 以下は前のルールのオンライン版（main ブランチ）の説明．
 
