@@ -93,6 +93,8 @@ header #quit { margin-left: auto; }
 .setup .box h3 { margin-top: 4px; }
 .setup input.link { width: min(100%, 420px); }
 .setup .seats { padding-left: 20px; }
+.setup .myname { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.setup .myname label { display: inline; margin: 0; }
 .setup .myname input { width: 12em; }
 .setup .myname .hint { color: #c0392b; font-weight: bold; }
 .setup .seats li { margin: 4px 0; }
