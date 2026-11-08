@@ -1,10 +1,10 @@
 // スライド版の試作画面（ローカルでボットと遊ぶ．オンライン対戦はまだない）
 
 import './ui.css';
-import { ARROW, DELTA, DIRS, Dir, SCARDS, SKind, canBuyAt, canDropAt, needText } from './cards';
+import { ARROW, Dir, SCARDS, SKind, canBuyAt, canDropAt, needText } from './cards';
 import {
-  DEFAULT_BOARD, SBOARDS, SCard, SPlayer, SState, Walk, X_MAX, X_MIN, applySlide, bonus, brake, canAdjust, canPeek, cellPower,
-  canFlip, choicesFor, favCost, isLastCard, inBoard, isCatch, isDeep, newSlideGame, overshoot, ownedCards, removeLoad, rowEffect, samePos, stopperCells, yMax, yMin,
+  DEFAULT_BOARD, SBOARDS, SCard, SPlayer, SState, Walk, X_MAX, X_MIN, applySlide, bonus, cellPower,
+  canFlip, choicesFor, favCost, isLastCard, hasBlock, isTrace, isDeep, newSlideGame, ownedCards, removeLoad, rowEffect, samePos, stopperCells, yMax, yMin,
 } from './engine';
 import { SBOT_LABELS, SPRESETS, chooseSlideAction } from './bot';
 import { randomSeed } from '../engine/rng';
@@ -60,13 +60,12 @@ function rulesHTML() {
   return `<ul>
     <li>毎手番，コマは中央から．少なくとも1枚めくる．山札が尽きたら捨札を混ぜてめくり続けられる</li>
     <li>縦：中央から上が<b>物欲</b>（その行の額まで取得），下が<b>捨欲</b>（その行の量まで排除．一番下は捨札からも1枚）．額・量は盤の左に書いてある</li>
-    <li>横：右ほど<b>衝動</b>．止めると最後に動いた向きへ1/2マス余分に進む（衝動3はぶつかるまで）が，取得の額が+1/+2/+3．
-      左ほど<b>理性</b>．排除の量が+1/+2/+3．理性2以上は止めた後に1マス動ける，理性3は次の1枚が見える</li>
+    <li>横：右ほど<b>衝動</b>（取得の額が+1/+2/+3），左ほど<b>理性</b>（排除の量が+1/+2/+3）</li>
     <li>高いもの・派手なもの（滑り台・一生モノ・愛用品・氷の廊下・道連れ袋）は<b>衝動の列でないと取得できない</b>．
       思い入れのあるもの（ガラクタ・思い出の品・愛用品・滑り台）は<b>理性の列でないと排除できない</b></li>
     <li>最後の1枚（持ち物が今日めくった1枚だけ）は，どこで止まっても手放せる</li>
-    <li>排除できるのは今日めくったカード（重さの合計が量以下）．排除したマスに<b>積み木</b>（片付けた跡）が残る．
-      積み木のマスに入ると，そのカードの動きはそこで終わる（1人4個，古いものから動かす）</li>
+    <li>排除できるのは今日めくったカード（重さの合計が量以下）．排除したマスに<b>片付けた跡</b>（1個だけ．次に排除したら移す）が残る</li>
+    <li>片付けた跡とストッパーの積み木は壁：そのマスには入れず，手前で止まる．START の上下左右には置けない</li>
     <li>お気に入り（一生モノ・回した愛用品）は排除できない．お気に入りだけ3枚以下になっても達成</li>
     <li>誰かが達成したらそのラウンドの最後まで．排除した枚数が多い人の勝ち</li>
   </ul>`;
@@ -83,18 +82,11 @@ function rowLabel(y: number) {
 }
 function colLabel(x: number) { return x < 0 ? `理性${-x}` : x > 0 ? `衝動${x}` : '中'; }
 
-/** 止めたらどこで止まるか（ブレーキ込み） */
-function stopPreview(w: Walk): Walk {
-  const v: Walk = { board: w.board, pos: { ...w.pos }, lastDir: w.lastDir, blocks: w.blocks, trail: [] };
-  brake(v);
-  return v;
-}
-
 function boardHTML(p: SPlayer, big: boolean, clickCells: { x: number; y: number }[] = [], preview?: { x: number; y: number }) {
   const w = p.walk;
   const active = s!.players[s!.current] === p;
   let h = `<div class="board ${big ? 'big' : 'mini'}"><div class="corner"></div>`;
-  for (let x = X_MIN; x <= X_MAX; x++) h += `<div class="colh" style="--hb:${colColor(x) ?? 'transparent'};color:${colInk(x)}">${big ? colLabel(x) : x}${big && x > 0 ? `<small>額+${bonus(x, 'buy')}・${overshoot(x) === Infinity ? '滑る' : overshoot(x) + '余分'}</small>` : ''}${big && x < 0 ? `<small>量+${bonus(x, 'remove')}${canAdjust(x) ? '・調整' : ''}${canPeek(x) ? '・見る' : ''}</small>` : ''}</div>`;
+  for (let x = X_MIN; x <= X_MAX; x++) h += `<div class="colh" style="--hb:${colColor(x) ?? 'transparent'};color:${colInk(x)}">${big ? colLabel(x) : x}${big && x > 0 ? `<small>額+${bonus(x, 'buy')}</small>` : ''}${big && x < 0 ? `<small>量+${bonus(x, 'remove')}</small>` : ''}</div>`;
   const b = s!.board;
   for (let y = yMax(b); y >= yMin(b); y--) {
     const e = rowEffect(y, b);
@@ -105,7 +97,8 @@ function boardHTML(p: SPlayer, big: boolean, clickCells: { x: number; y: number 
       if (active && w.trail.some(t => samePos(t, pos))) cls.push('trail');
       if (clickCells.some(c => samePos(c, pos))) cls.push('pick');
       if (preview && samePos(preview, pos)) cls.push('preview');
-      const block = isCatch(w, pos) ? `<span class="block" title="積み木（入るとそこで止まる）"></span>` : '';
+      const block = isTrace(w, pos) ? `<span class="block trace" title="片付けた跡（入れない）"></span>`
+        : hasBlock(w, pos) ? `<span class="block" title="積み木（入れない）"></span>` : '';
       const pawn = active && samePos(w.pos, pos) ? `<span class="pawn"></span>` : '';
       const start = x === 0 && y === 0 ? `<span class="start">S</span>` : '';
       const pw = cellPower(pos, b);
@@ -138,8 +131,6 @@ function render() {
   let clickCells: { x: number; y: number }[] = [];
   let preview: { x: number; y: number } | undefined;
   if (mine && s.turn === 'stopper') clickCells = stopperCells(p.walk);
-  if (mine && s.turn === 'move' && p.flow.length) preview = stopPreview(p.walk).pos;
-  if (mine && s.turn === 'adjust') clickCells = DIRS.map(d => ({ x: p.walk.pos.x + DELTA[d][0], y: p.walk.pos.y + DELTA[d][1] })).filter(q => inBoard(q, s!.board));
 
   const others = s.players.map((q, i) => ({ q, i })).filter(x => x.i !== me);
   app.innerHTML = `
@@ -211,12 +202,9 @@ function controlsHTML(): string {
   const here = cellPower(w.pos, st.board);
   switch (st.turn) {
     case 'move': {
-      const pv = stopPreview(w);
-      const pw = cellPower(pv.pos, st.board);
-      const peek = canPeek(w.pos.x) && p.deck.length ? `<p>理性3：次の1枚は <b>${SCARDS[p.deck[p.deck.length - 1].kind].name}</b></p>` : '';
       const where = !p.flow.length ? '少なくとも1枚めくってください'
-        : `止めると (${pv.pos.x},${pv.pos.y}) ${pw.kind === 'buy' ? `物欲${pw.amount}で取得` : pw.kind === 'remove' ? `捨欲${pw.amount}で排除` : 'で何もしない'}${samePos(pv.pos, w.pos) ? '' : '（勢いで進む）'}`;
-      return `${peek}<p>${where}</p>
+        : `止めると (${w.pos.x},${w.pos.y}) ${here.kind === 'buy' ? `物欲${here.amount}で取得` : here.kind === 'remove' ? `捨欲${here.amount}で排除` : 'で何もしない'}`;
+      return `<p>${where}</p>
         <button id="flip" class="primary" ${canFlip(p) ? '' : 'disabled'}>めくる（山札${p.deck.length}${p.deck.length ? '' : '→捨札を混ぜる'}）</button>
         <button id="stop" ${!p.flow.length && canFlip(p) ? 'disabled' : ''}>止める</button>`;
     }
@@ -226,9 +214,6 @@ function controlsHTML(): string {
     }
     case 'stopper':
       return `<p>ストッパー：積み木を置くマスを盤で選んでください（光っているマス）</p><button id="noblock">置かない</button>`;
-    case 'adjust':
-      return `<p>理性の列で止まりました．1マスだけ動けます（光っているマス）．今の場所：${here.kind === 'buy' ? `物欲${here.amount}` : here.kind === 'remove' ? `捨欲${here.amount}` : '効果なし'}</p>
-        <button id="noadjust" class="primary">ここでよい</button>`;
     case 'resolve': {
       if (isLastCard(p)) {
         return `<p>最後の1枚です．どこで止まっても手放せます</p>${cardHTML(p.flow[0])}
@@ -274,17 +259,11 @@ function bindControls(clickCells: { x: number; y: number }[]) {
   q('#flip')?.addEventListener('click', () => act({ type: 'flip' }));
   q('#stop')?.addEventListener('click', () => act({ type: 'stop' }));
   q('#noblock')?.addEventListener('click', () => act({ type: 'stopper', cell: null }));
-  q('#noadjust')?.addEventListener('click', () => act({ type: 'adjust', dir: null }));
   app.querySelectorAll<HTMLButtonElement>('[data-dir]').forEach(b => b.onclick = () => act({ type: 'branch', dir: b.dataset.dir as Dir }));
   app.querySelectorAll<HTMLElement>('.board.big .cell.pick').forEach(el => el.onclick = () => {
     const pos = { x: +el.dataset.x!, y: +el.dataset.y! };
     if (!clickCells.some(c => samePos(c, pos))) return;
     if (s!.turn === 'stopper') act({ type: 'stopper', cell: pos });
-    else if (s!.turn === 'adjust') {
-      const w = cur().walk;
-      const d = DIRS.find(d => w.pos.x + DELTA[d][0] === pos.x && w.pos.y + DELTA[d][1] === pos.y)!;
-      act({ type: 'adjust', dir: d });
-    }
   });
   app.querySelectorAll<HTMLButtonElement>('[data-add]').forEach(b => b.onclick = () => { sel.buy.push(b.dataset.add as SKind); render(); });
   app.querySelectorAll<HTMLButtonElement>('[data-sub]').forEach(b => b.onclick = () => {

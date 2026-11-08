@@ -1,9 +1,9 @@
 // スライド版のボット．めくるか止めるかは「止めたときの価値」と「めくり続けたときの期待値」（2手先まで）を比べて決める．
 // 型（genome）ごとに取得の優先順・お気に入りの扱いが違う．型が勝ち筋（身軽・滑走・お気に入り・揺り戻し）に対応する
 
-import { DELTA, DIRS, Dir, SCARDS, SKind, canBuyAt, canDropAt } from './cards';
+import { Dir, SCARDS, SKind, canBuyAt, canDropAt } from './cards';
 import {
-  SAction, SCard, SPlayer, SState, Walk, applyMove, applySlide, brake, blocked, canAdjust, canPeek, cellPower, choicesFor,
+  SAction, SCard, SPlayer, SState, Walk, applyMove, applySlide, cellPower, choicesFor,
   canFlip, isDeep, isLastCard, moveOf, ownedCards, removeLoad, stopperCells,
 } from './engine';
 
@@ -87,31 +87,19 @@ function planRotate(c: Ctx, flow: SCard[]): number[] {
   return flow.filter(x => SCARDS[x.kind].rotatable && !x.fav).slice(0, Math.max(0, 3 - favs)).map(x => x.id);
 }
 
-/** 止まった位置での価値（止めた後の1マス調整は最善を選ぶ） */
+/** 止まった位置での価値 */
 function valueAt(c: Ctx, w: Walk, flow: SCard[]): number {
-  const opts = [w.pos];
-  if (canAdjust(w.pos.x)) for (const d of DIRS) {
-    const [dx, dy] = DELTA[d];
-    const q = { x: w.pos.x + dx, y: w.pos.y + dy };
-    if (!blocked(w, q)) opts.push(q);
-  }
-  let best = 0;
-  for (const pos of opts) {
-    const pw = cellPower(pos, c.s.board);
-    let v = 0;
-    if (pw.kind === 'buy') v = planBuy(c, pw.amount, pos.x).value + planRotate(c, flow).length * 3;
-    if (pw.kind === 'remove') v = planRemove(c, flow, pw.amount, isDeep(pos.y, c.s.board), pos.x).value;
-    best = Math.max(best, v);
-  }
-  return best;
+  const pos = w.pos;
+  const pw = cellPower(pos, c.s.board);
+  if (pw.kind === 'buy') return planBuy(c, pw.amount, pos.x).value + planRotate(c, flow).length * 3;
+  if (pw.kind === 'remove') return planRemove(c, flow, pw.amount, isDeep(pos.y, c.s.board), pos.x).value;
+  return 0;
 }
 
-const cloneWalk = (w: Walk): Walk => ({ board: w.board, pos: { ...w.pos }, lastDir: w.lastDir, blocks: w.blocks.map(b => ({ ...b })), trail: [] });
+const cloneWalk = (w: Walk): Walk => ({ board: w.board, pos: { ...w.pos }, lastDir: w.lastDir, blocks: w.blocks.map(b => ({ ...b })), trace: w.trace, trail: [] });
 
 function stopValue(c: Ctx, w: Walk, flow: SCard[]): number {
-  const v = cloneWalk(w);
-  brake(v);
-  return valueAt(c, v, flow);
+  return valueAt(c, w, flow);
 }
 
 /** カードをめくった後の最善の選択（向き・積み木）と，その後の価値 */
@@ -178,18 +166,6 @@ export function chooseSlideAction(s: SState, g: SGenome): SAction {
       const r = afterCard(c, w, p.flow.slice(0, -1), card, nextDeck(p), 1);
       return { type: 'stopper', cell: r.cell ?? null };
     }
-    case 'adjust': {
-      let best: { v: number; dir: Dir | null } = { v: valueAt(c, { ...w, pos: w.pos }, p.flow) - 0.01, dir: null };
-      for (const d of DIRS) {
-        const [dx, dy] = DELTA[d];
-        const q = { x: w.pos.x + dx, y: w.pos.y + dy };
-        if (blocked(w, q)) continue;
-        const pw = cellPower(q, s.board);
-        const v = pw.kind === 'buy' ? planBuy(c, pw.amount, q.x).value : pw.kind === 'remove' ? planRemove(c, p.flow, pw.amount, isDeep(q.y, s.board), q.x).value : 0;
-        if (v > best.v) best = { v, dir: d };
-      }
-      return { type: 'adjust', dir: best.dir };
-    }
     case 'resolve': {
       if (isLastCard(p)) return { type: 'resolve', buy: [], remove: [p.flow[0].id], rotate: [] };
       const pw = cellPower(w.pos, s.board);
@@ -201,10 +177,7 @@ export function chooseSlideAction(s: SState, g: SGenome): SAction {
       if (!canFlip(p) || isLastCard(p)) return { type: 'stop' };
       if (!p.flow.length) return { type: 'flip' }; // 毎手番，少なくとも1枚めくる
       const stopV = stopValue(c, w, p.flow);
-      // 理性3では次の1枚が見える
-      const contV = canPeek(w.pos.x) && p.deck.length
-        ? afterCard(c, w, p.flow, p.deck[p.deck.length - 1], p.deck.slice(0, -1), 1).value
-        : contValue(c, w, p.flow, nextDeck(p), 1);
+      const contV = contValue(c, w, p.flow, nextDeck(p), 1);
       return contV > stopV ? { type: 'flip' } : { type: 'stop' };
     }
   }

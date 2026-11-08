@@ -1,7 +1,8 @@
 // スライド版のルール．仕様：Memories/01_BoardGames/ミニマリスト_スライド版_仕様.md
 //   盤：横 x = −3（理性3）〜3（衝動3）．縦は中央 y = 0 から上が物欲，下が捨欲（行ごとの額・量は SBoard）．毎手番 (0,0) から始める
 //   手番：めくる（コマが動く）か止めるかを繰り返し，止まったマスで取得か排除をする
-//   積み木（片付けた跡・ストッパー）：そのマスに入ると，そのカードの動きはそこで終わる
+//   積み木（片付けた跡1個・ストッパー）：壁．積み木のマスには入れず，その手前で止まる
+//   列（理性・衝動）の効果は額・量の上乗せだけ（v0.4）
 
 import { DELTA, Dir, FAV_MOVE, canBuyAt, canDropAt, LIGHT_PER, MEMO_AT, Move, SCARDS, SKind, STARTING, UNLIMITED_KINDS, MARKET } from './cards';
 import { shuffle } from '../engine/rng';
@@ -20,7 +21,8 @@ export const yMax = (b: SBoard) => b.buy.length;
 export const yMin = (b: SBoard) => -b.remove.length;
 /** 一番下の行（捨札からも1枚排除できる） */
 export const isDeep = (y: number, b: SBoard) => y === yMin(b);
-export const BLOCKS = 4;
+/** ストッパーの積み木（1人の上限．超えたら一番古いものを動かす） */
+export const BLOCKS = 3;
 export const FINISH_FAVS = 3;
 export const MAX_ROUNDS = 60;
 export const UNLIMITED = 99;
@@ -29,6 +31,8 @@ export interface Pos { x: number; y: number }
 export const samePos = (a: Pos, b: Pos) => a.x === b.x && a.y === b.y;
 export const inBoard = (p: Pos, b: SBoard) => p.x >= X_MIN && p.x <= X_MAX && p.y >= yMin(b) && p.y <= yMax(b);
 const isStart = (p: Pos) => p.x === 0 && p.y === 0;
+/** START とその上下左右には積み木を置けない（道がふさがらないように） */
+export const noBlockZone = (p: Pos) => Math.abs(p.x) + Math.abs(p.y) <= 1;
 
 /** 行の効果：取得の額か排除の量（どちらでもなければ none） */
 export function rowEffect(y: number, b: SBoard): { kind: 'buy' | 'remove' | 'none'; amount: number } {
@@ -38,24 +42,20 @@ export function rowEffect(y: number, b: SBoard): { kind: 'buy' | 'remove' | 'non
 }
 /** 列の上乗せ：衝動の列は取得の額に，理性の列は排除の量に（衝動買い／冷静な片付け） */
 export const bonus = (x: number, kind: 'buy' | 'remove') => (kind === 'buy' ? Math.max(0, x) : Math.max(0, -x));
-/** 止めたとき余分に進む歩数（衝動3はぶつかるまで） */
-export const overshoot = (x: number) => (x >= 3 ? Infinity : Math.max(0, x));
-/** 止めたあと1マス動いてよいか（理性2以上） */
-export const canAdjust = (x: number) => x <= -2;
-/** 次の1枚を見られるか（理性3） */
-export const canPeek = (x: number) => x <= -3;
 
 export interface SCard { id: number; kind: SKind; fav: boolean }
 
 /** 手番中の動きの状態（ボットの先読みでも使う） */
-export interface Walk { board: SBoard; pos: Pos; lastDir: Dir | null; blocks: Pos[]; trail: Pos[] }
+/** blocks はストッパーの積み木，trace は片付けた跡（1個だけ．排除するたびに止まったマスへ移す） */
+export interface Walk { board: SBoard; pos: Pos; lastDir: Dir | null; blocks: Pos[]; trace?: Pos | null; trail: Pos[] }
 
-/** 盤の外へは出られない（端で止まる） */
-export const blocked = (w: Walk, p: Pos) => !inBoard(p, w.board);
-/** 積み木のマス：入れるが，入ったらそのカードの動きはそこで終わる（前に片付けた場所に引っかかる） */
-export const isCatch = (w: Walk, p: Pos) => w.blocks.some(b => samePos(b, p));
+/** 積み木のあるマス */
+export const hasBlock = (w: Walk, p: Pos) => w.blocks.some(b => samePos(b, p)) || (!!w.trace && samePos(w.trace, p));
+export const isTrace = (w: Walk, p: Pos) => !!w.trace && samePos(w.trace, p);
+/** 盤の外と積み木のマスへは入れない（その手前で止まる） */
+export const blocked = (w: Walk, p: Pos) => !inBoard(p, w.board) || hasBlock(w, p);
 
-/** dir に n マス（端では止まる．積み木のマスに入ったらそこで止まる） */
+/** dir に n マス（盤の端・積み木の手前で止まる） */
 export function walk(w: Walk, dir: Dir, n: number): void {
   const [dx, dy] = DELTA[dir];
   w.lastDir = dir;
@@ -64,7 +64,6 @@ export function walk(w: Walk, dir: Dir, n: number): void {
     if (blocked(w, next)) break;
     w.pos = next;
     w.trail.push(next);
-    if (isCatch(w, next)) break;
   }
 }
 
@@ -81,10 +80,11 @@ export function choicesFor(card: SCard, w: Walk): Dir[] {
 /** 積み木を置ける場所（コマの上下左右．盤の中・スタート以外・積み木のないマス） */
 export function stopperCells(w: Walk): Pos[] {
   return (['U', 'D', 'L', 'R'] as Dir[]).map(d => ({ x: w.pos.x + DELTA[d][0], y: w.pos.y + DELTA[d][1] }))
-    .filter(p => inBoard(p, w.board) && !isStart(p) && !w.blocks.some(b => samePos(b, p)));
+    .filter(p => inBoard(p, w.board) && !noBlockZone(p) && !hasBlock(w, p));
 }
 
 export function addBlock(blocks: Pos[], p: Pos): void {
+  if (noBlockZone(p) || blocks.some(b => samePos(b, p))) return;
   blocks.push(p);
   while (blocks.length > BLOCKS) blocks.shift();
 }
@@ -116,16 +116,9 @@ export function applyMove(card: SCard, w: Walk, removed: number, dir?: Dir, cell
   }
 }
 
-/** 止めたときのブレーキ（衝動の列では最後に動いた向きへ余分に進む．積み木の上ならそこで止まれる） */
-export function brake(w: Walk): void {
-  if (isCatch(w, w.pos)) return;
-  const n = overshoot(w.pos.x);
-  if (n > 0 && w.lastDir) walk(w, w.lastDir, n);
-}
-
 // ---- ゲームの状態 ----
 
-export type TurnPhase = 'move' | 'branch' | 'stopper' | 'adjust' | 'resolve';
+export type TurnPhase = 'move' | 'branch' | 'stopper' | 'resolve';
 
 export interface SPlayer {
   name: string;
@@ -160,12 +153,11 @@ export type SAction =
   | { type: 'stop' }
   | { type: 'branch'; dir: Dir }
   | { type: 'stopper'; cell: Pos | null }
-  | { type: 'adjust'; dir: Dir | null }
   | { type: 'resolve'; buy: SKind[]; remove: number[]; rotate: number[] };
 
 export class SRuleError extends Error {}
 
-const newWalk = (board: SBoard, blocks: Pos[]): Walk => ({ board, pos: { x: 0, y: 0 }, lastDir: null, blocks, trail: [{ x: 0, y: 0 }] });
+const newWalk = (board: SBoard, blocks: Pos[], trace: Pos | null = null): Walk => ({ board, pos: { x: 0, y: 0 }, lastDir: null, blocks, trace, trail: [{ x: 0, y: 0 }] });
 
 export function newSlideGame(
   setup: { name: string; isBot?: boolean; botType?: string }[], seed: number, opts: { market?: SKind[]; board?: string } = {},
@@ -245,18 +237,6 @@ export function applySlide(s: SState, seat: number, a: SAction): void {
       stop(s, p);
       return;
     }
-    case 'adjust': {
-      if (s.turn !== 'adjust') throw new SRuleError('1マス動く場面ではありません');
-      if (a.dir) {
-        const [dx, dy] = DELTA[a.dir];
-        const next = { x: w.pos.x + dx, y: w.pos.y + dy };
-        if (blocked(w, next)) throw new SRuleError('そこへは動けません');
-        w.pos = next;
-        w.trail.push(next);
-      }
-      s.turn = 'resolve';
-      return;
-    }
     case 'resolve': {
       if (s.turn !== 'resolve') throw new SRuleError('まだ止まっていません');
       resolve(s, p, a);
@@ -265,9 +245,8 @@ export function applySlide(s: SState, seat: number, a: SAction): void {
   }
 }
 
-function stop(s: SState, p: SPlayer): void {
-  brake(p.walk);
-  s.turn = canAdjust(p.walk.pos.x) ? 'adjust' : 'resolve';
+function stop(s: SState, _p: SPlayer): void {
+  s.turn = 'resolve';
 }
 
 function resolve(s: SState, p: SPlayer, a: { buy: SKind[]; remove: number[]; rotate: number[] }): void {
@@ -316,7 +295,8 @@ function resolve(s: SState, p: SPlayer, a: { buy: SKind[]; remove: number[]; rot
   p.flow = p.flow.filter(c => !gone.has(c.id));
   p.discard = p.discard.filter(c => !gone.has(c.id));
   p.removed += ids.length;
-  if (ids.length) addBlock(p.walk.blocks, { ...pos });
+  // 片付けた跡：次に排除するまで，このマスには入れない（START のまわりで排除したら跡は取り除く）
+  if (ids.length) p.walk.trace = noBlockZone(pos) ? null : { ...pos };
 
   const where = `(${pos.x},${pos.y})`;
   const parts = [`${p.name}：${where}で止まった`];
@@ -360,7 +340,7 @@ function endTurn(s: SState, p: SPlayer): void {
 
 function startTurn(s: SState): void {
   const p = s.players[s.current];
-  p.walk = newWalk(s.board, p.walk.blocks);
+  p.walk = newWalk(s.board, p.walk.blocks, p.walk.trace ?? null);
   s.turn = 'move';
   if (p.deck.length === 0) reshuffle(s, p);
 }

@@ -52,6 +52,7 @@ header #quit { margin-left: auto; }
 .board.mini .cell .amt { position: absolute; right: 3px; bottom: 1px; font-size: 10px; font-weight: 700; color: #333; }
 .cell .start { display: none; }
 .cell .block { position: absolute; inset: 22% 22% auto auto; width: 34%; height: 34%; background: var(--block); border-radius: 2px; }
+.cell .block.trace { background: repeating-linear-gradient(45deg, var(--block) 0 3px, transparent 3px 6px); border: 2px solid var(--block); }
 .cell .pawn { position: absolute; left: 50%; top: 50%; width: 46%; height: 46%; transform: translate(-50%, -50%); background: var(--pawn); border-radius: 50%; }
 .who { color: var(--muted); margin-top: 6px; }
 

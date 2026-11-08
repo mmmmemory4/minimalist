@@ -42,6 +42,7 @@ body { margin: 0; color: #222; font-family: "Noto Sans JP", "Hiragino Sans", "Yu
 .pboard .brh span { font-size: 9pt; }
 .pboard .bc { position: relative; border: 0.3mm solid #aaa; border-radius: 1mm; }
 .pboard .bc .amt { position: absolute; right: 1mm; bottom: 0.5mm; font-size: 7pt; color: #333; font-weight: 700; }
+.pboard .bc.nz { border: 0.5mm dashed #666; }
 .pboard .bc .st { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 8pt; border: 0.6mm solid #222; border-radius: 1mm; }
 
 /* コマと積み木 */
@@ -49,6 +50,7 @@ body { margin: 0; color: #222; font-family: "Noto Sans JP", "Hiragino Sans", "Yu
 .tokrow .tl { width: 26mm; font-weight: 700; }
 .tokrow .pawn { width: 16mm; height: 16mm; border-radius: 50%; border: 0.4mm dashed #333; }
 .tokrow .blk { width: 13mm; height: 13mm; border: 0.4mm dashed #333; }
+.tokrow .blk.trace { display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; font-size: 11pt; }
 
 @media print {
   html { background: #fff; }

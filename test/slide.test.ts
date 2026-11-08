@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SCARDS } from '../src/slide/cards';
 import {
-  SBOARDS, SState, Walk, applySlide, brake, cellPower, isDone, newSlideGame, ownedCards, removeLoad, walk,
+  SBOARDS, SState, Walk, applySlide, cellPower, isDone, newSlideGame, ownedCards, removeLoad, walk,
 } from '../src/slide/engine';
 import { SPRESETS, playSlideTurn } from '../src/slide/bot';
 
@@ -29,28 +29,18 @@ describe('スライド版', () => {
     applySlide(s, 0, { type: 'flip' });
   });
 
-  it('端では止まり，積み木のマスに入るとそこで止まる', () => {
+  it('端では止まり，積み木のマスには入れずその手前で止まる', () => {
     const w = w0();
     walk(w, 'D', Infinity);
     expect(w.pos).toEqual({ x: 0, y: -4 });
     const v = w0([{ x: 0, y: -2 }]);
     walk(v, 'D', Infinity);
-    expect(v.pos).toEqual({ x: 0, y: -2 });
-    walk(v, 'D', 1); // 次のカードでは積み木から出られる
-    expect(v.pos).toEqual({ x: 0, y: -3 });
-  });
-
-  it('衝動の列で止めると余分に進み，理性の列ではぴったり止まる', () => {
-    const w = w0();
-    walk(w, 'R', 2);
-    walk(w, 'D', 1);
-    brake(w);
-    expect(w.pos).toEqual({ x: 2, y: -3 });
-    const v = w0();
-    walk(v, 'L', 2);
-    walk(v, 'D', 1);
-    brake(v);
-    expect(v.pos).toEqual({ x: -2, y: -1 });
+    expect(v.pos).toEqual({ x: 0, y: -1 });
+    walk(v, 'D', 1); // 積み木の向こうへは進めない
+    expect(v.pos).toEqual({ x: 0, y: -1 });
+    walk(v, 'L', 1);
+    walk(v, 'D', 2); // 回り込めば進める
+    expect(v.pos).toEqual({ x: -1, y: -3 });
   });
 
   it('行の効果は盤の目盛りどおり．衝動の列で上乗せ', () => {
@@ -67,6 +57,17 @@ describe('スライド版', () => {
     expect(cellPower({ x: -2, y: -1 }, STD)).toEqual({ kind: 'remove', amount: 2 }); // 捨欲0でも理性2なら2
   });
 
+  it('片付けた跡は1個で，START のまわりには残らない', () => {
+    const s = newSlideGame([{ name: 'A' }], 7, { board: 'basic' });
+    const p = s.players[0];
+    p.deck = [card('DOWN', 1)];
+    p.discard = [card('WANT', 2)];
+    applySlide(s, 0, { type: 'flip' });
+    applySlide(s, 0, { type: 'stop' }); // (0,-1)
+    applySlide(s, 0, { type: 'resolve', buy: [], remove: [1], rotate: [] });
+    expect(p.walk.trace).toBeNull();
+  });
+
   it('道連れ袋は，もう1枚を重さ0にする', () => {
     expect(removeLoad([card('DRAG', 1), card('DOWN2', 2)])).toBe(1);
     expect(removeLoad([card('DOWN', 1), card('DOWN2', 2)])).toBe(2);
@@ -77,12 +78,11 @@ describe('スライド版', () => {
     stack(s, 'WANT', 'WANT');
     applySlide(s, 0, { type: 'flip' });
     applySlide(s, 0, { type: 'stop' });
-    expect(() => applySlide(s, 0, { type: 'resolve', buy: ['SLIDE'], remove: [], rotate: [] })).toThrow(); // 物欲2で3は買えない
-    applySlide(s, 0, { type: 'resolve', buy: ['DOWN2'], remove: [], rotate: [] });
-    expect(s.players[0].discard.some(c => c.kind === 'DOWN2')).toBe(true);
+    expect(() => applySlide(s, 0, { type: 'resolve', buy: ['SLIDE'], remove: [], rotate: [] })).toThrow(); // 物欲2で6は買えない
+    applySlide(s, 0, { type: 'resolve', buy: ['BREATH'], remove: [], rotate: [] });
+    expect(s.players[0].discard.some(c => c.kind === 'BREATH')).toBe(true);
 
     applySlide(s, 1, { type: 'flip' }); applySlide(s, 1, { type: 'stop' });
-    if (s.turn === 'adjust') applySlide(s, 1, { type: 'adjust', dir: null });
     applySlide(s, 1, { type: 'resolve', buy: [], remove: [], rotate: [] });
 
     stack(s, 'DOUBT', 'SLIDE', 'JUNK');
@@ -95,7 +95,8 @@ describe('スライド版', () => {
     expect(() => applySlide(s, 0, { type: 'resolve', buy: [], remove: [...ids, fromDiscard[0].id, fromDiscard[1].id], rotate: [] })).toThrow();
     applySlide(s, 0, { type: 'resolve', buy: [], remove: [...ids, fromDiscard[0].id], rotate: [] });
     expect(p.removed).toBe(4);
-    expect(p.walk.blocks).toEqual([{ x: -1, y: -4 }]);
+    expect(p.walk.trace).toEqual({ x: -1, y: -4 });
+    expect(p.walk.blocks).toEqual([]);
   });
 
   it('衝動の列でしか取得できないカード・理性の列でしか排除できないカードがある', () => {
@@ -107,7 +108,6 @@ describe('スライド版', () => {
     expect(() => applySlide(s, 0, { type: 'resolve', buy: ['ICE'], remove: [], rotate: [] })).toThrow(/衝動1/);
     applySlide(s, 0, { type: 'resolve', buy: ['DOWN2'], remove: [], rotate: [] });
     applySlide(s, 1, { type: 'flip' }); applySlide(s, 1, { type: 'stop' });
-    if (s.turn === 'adjust') applySlide(s, 1, { type: 'adjust', dir: null });
     applySlide(s, 1, { type: 'resolve', buy: [], remove: [], rotate: [] });
     stack(s, 'JUNK', 'DOWN2');
     applySlide(s, 0, { type: 'flip' });
@@ -154,8 +154,8 @@ describe('スライド版', () => {
       const s = newSlideGame(gs.map((_, i) => ({ name: `P${i}`, isBot: true })), seed, { board: seed % 2 ? 'slow' : 'basic' });
       while (s.phase === 'play') playSlideTurn(s, gs);
       for (const p of s.players) expect(ownedCards(p).length + p.removed).toBe(5 + p.bought);
-      if (s.winners.length) finished++;
+      if (s.winners.length && s.board.name === 'basic') finished++; // ゆっくりの盤は v0.4 では長引く（仕様のmd）
     }
-    expect(finished).toBeGreaterThan(34);
+    expect(finished).toBeGreaterThan(17);
   });
 });

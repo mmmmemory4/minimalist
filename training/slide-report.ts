@@ -2,7 +2,7 @@
 // 型（勝ち筋）を混ぜた2〜4人卓を回し，ゲームの長さ・引き分け・取得枚数・勝率倍率（1.00 = 公平）・
 // 止まった行と列（序盤と終盤）・達成の仕方（0枚／お気に入り）を表にする
 
-import { SKind } from '../src/slide/cards';
+import { SCARDS, SKind } from '../src/slide/cards';
 import { SPRESETS, SBOT_LABELS, playSlideTurn } from '../src/slide/bot';
 import { SState, newSlideGame, ownedCards } from '../src/slide/engine';
 import { rngFrom } from './common';
@@ -10,6 +10,8 @@ import { rngFrom } from './common';
 const GAMES = Number(process.argv[2] ?? 600);
 const ONLY = (process.env.TYPES ?? '').split(',').filter(Boolean);
 const BOARD = process.env.BOARD ?? 'basic';
+// 試しにコストを変える：COSTS=CALM=3,DOWN2=3
+for (const kv of (process.env.COSTS ?? '').split(',').filter(Boolean)) { const [k, v] = kv.split('='); SCARDS[k as SKind].cost = Number(v); }
 
 export function runReport(games: number, label = '') {
   const names = ONLY.length ? ONLY : Object.keys(SPRESETS);

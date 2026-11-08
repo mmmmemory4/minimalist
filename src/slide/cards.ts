@@ -22,6 +22,7 @@ export type Move =
   /** 思い出の品：排除した枚数が MEMO_AT 未満なら↑1，以上なら↓3 */
   | { t: 'memo' };
 
+// v0.4：左下（理性・捨欲）へ行くカードは高め（早く終わらせる道が強すぎないように）
 export type SKind =
   | 'WANT' | 'HES' | 'DOUBT' | 'JUNK'          // 初期カード
   | 'DOWN' | 'DOWN2' | 'BR' | 'BREATH'         // 基本
@@ -63,15 +64,15 @@ export const SCARDS: Record<SKind, SCardDef> = {
   DOUBT:  { kind: 'DOUBT',  name: '迷い',       move: step(['L'], 1), cost: null, weight: 1, text: '←1' },
   JUNK:   { kind: 'JUNK',   name: 'ガラクタ',   move: { t: 'none' }, cost: null, weight: 2, dropNeed: 1, text: '動かない．捨てる重さ2' },
   DOWN:   { kind: 'DOWN',   name: '片付けたい', move: step(['D'], 1), cost: 1, weight: 1, text: '↓1' },
-  DOWN2:  { kind: 'DOWN2',  name: '断捨離',     move: step(['D'], 2), cost: 2, weight: 1, text: '↓2' },
+  DOWN2:  { kind: 'DOWN2',  name: '断捨離',     move: step(['D'], 2), cost: 3, weight: 1, text: '↓2' },
   BR:     { kind: 'BR',     name: '分かれ道',   move: step(['D', 'R'], 1), cost: 1, weight: 1, text: '↓1か→1' },
-  BREATH: { kind: 'BREATH', name: '深呼吸',     move: step(['D', 'L'], 1), cost: 1, weight: 1, text: '↓1か←1' },
+  BREATH: { kind: 'BREATH', name: '深呼吸',     move: step(['D', 'L'], 1), cost: 2, weight: 1, text: '↓1か←1' },
   UP2:    { kind: 'UP2',    name: '欲しい欲しい', move: step(['U'], 2), cost: 1, weight: 1, text: '↑2' },
   RUSH:   { kind: 'RUSH',   name: '勢い',       move: step(['R', 'D'], 2), cost: 2, weight: 1, text: '→2か↓2' },
-  CALM:   { kind: 'CALM',   name: '冷静',       move: step(['L', 'D'], 2), cost: 2, weight: 1, text: '←2か↓2' },
-  LIGHT:  { kind: 'LIGHT',  name: '軽やか',     move: step(['D'], 1, { light: true }), cost: 2, weight: 1, text: `↓1＋身軽（排除${LIGHT_PER}枚ごとに+1）` },
+  CALM:   { kind: 'CALM',   name: '冷静',       move: step(['L', 'D'], 2), cost: 3, weight: 1, text: '←2か↓2' },
+  LIGHT:  { kind: 'LIGHT',  name: '軽やか',     move: step(['D'], 1, { light: true }), cost: 3, weight: 1, text: `↓1＋身軽（排除${LIGHT_PER}枚ごとに+1）` },
   DRAG:   { kind: 'DRAG',   name: '道連れ袋',   move: step(['D'], 1), cost: 2, weight: 1, drag: true, buyNeed: 1, text: '↓1．排除したとき今日の流れからもう1枚を重さ0で排除' },
-  SLIDE:  { kind: 'SLIDE',  name: '滑り台',     move: { t: 'slide', dir: 'D' }, cost: 5, weight: 1, buyNeed: 2, dropNeed: 1, text: '↓へぶつかるまで滑る' },
+  SLIDE:  { kind: 'SLIDE',  name: '滑り台',     move: { t: 'slide', dir: 'D' }, cost: 6, weight: 1, buyNeed: 2, dropNeed: 1, text: '↓へぶつかるまで滑る' },
   ICE:    { kind: 'ICE',    name: '氷の廊下',   move: { t: 'slide', dir: 'R' }, cost: 2, weight: 1, buyNeed: 1, text: '→へぶつかるまで滑る' },
   STOP:   { kind: 'STOP',   name: 'ストッパー', move: { t: 'stopper' }, cost: 2, weight: 1, text: '上下左右に積み木を1個置く' },
   SWING:  { kind: 'SWING',  name: '揺り戻し',   move: { t: 'swing' }, cost: 2, weight: 1, text: '物欲の行なら↓2，捨欲の行なら↑1，中央なら↓1' },

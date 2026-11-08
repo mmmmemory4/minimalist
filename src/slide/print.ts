@@ -4,7 +4,7 @@
 import './print.css';
 import { ARROW, LIGHT_PER, MARKET, MEMO_AT, SCARDS, SKind, STARTING, UNLIMITED_KINDS } from './cards';
 import {
-  BLOCKS, FINISH_FAVS, SBOARDS, SBoard, X_MAX, X_MIN, bonus, canAdjust, canPeek, isDeep, overshoot, rowEffect, yMax, yMin,
+  BLOCKS, FINISH_FAVS, SBOARDS, SBoard, X_MAX, X_MIN, bonus, isDeep, noBlockZone, rowEffect, yMax, yMin,
 } from './engine';
 import { INK, colColor, colInk, needBadges, rowColor } from './colors';
 
@@ -68,10 +68,8 @@ function cardPages(): string {
 function colHead(x: number): string {
   const name = x < 0 ? `理性${-x}` : x > 0 ? `衝動${x}` : '中';
   const fx: string[] = [];
-  if (x > 0) fx.push(`額+${bonus(x, 'buy')}`, overshoot(x) === Infinity ? '止めると滑る' : `止めると${overshoot(x)}マス余分`);
+  if (x > 0) fx.push(`額+${bonus(x, 'buy')}`);
   if (x < 0) fx.push(`量+${bonus(x, 'remove')}`);
-  if (canAdjust(x)) fx.push('止めた後1マス動ける');
-  if (canPeek(x)) fx.push('次の1枚を見られる');
   return `<div class="bch" style="background:${colColor(x) ?? '#fff'};color:${colInk(x)}"><b>${name}</b><small>${fx.join('<br>')}</small></div>`;
 }
 
@@ -89,13 +87,14 @@ function boardPage(b: SBoard): string {
     for (let x = X_MIN; x <= X_MAX; x++) {
       const rc = rowColor(e.kind, e.amount), cc = colColor(x) ?? rc;
       const start = x === 0 && y === 0;
-      g += `<div class="bc" style="background:linear-gradient(to top, ${cc} 0 30%, ${rc} 30%)">${start ? '<span class="st">START</span>' : ''}${e.kind !== 'none' ? `<span class="amt">${e.kind === 'buy' ? '額' : '量'}${e.amount + bonus(x, e.kind)}</span>` : ''}</div>`;
+      const nz = !start && noBlockZone({ x, y }) ? ' nz' : '';
+      g += `<div class="bc${nz}" style="background:linear-gradient(to top, ${cc} 0 30%, ${rc} 30%)">${start ? '<span class="st">START</span>' : ''}${e.kind !== 'none' ? `<span class="amt">${e.kind === 'buy' ? '額' : '量'}${e.amount + bonus(x, e.kind)}</span>` : ''}</div>`;
     }
   }
   g += `</div>`;
   return `<section class="page"><h2>個人ボード：${b.label}</h2>${g}
     <p class="note">マスの右下の数字＝そのマスで止まったときの額・量（列の上乗せ込み）．上の色＝物欲（青）・捨欲（赤），下の帯＝理性（緑）・衝動（オレンジ），どちらも濃いほど強い．
-    コマは毎手番 START から．積み木（片付けた跡）は1人${BLOCKS}個まで．</p></section>`;
+    コマは毎手番 START から．点線のマス（START の上下左右）には積み木を置けない．</p></section>`;
 }
 
 // ---- コマと積み木 ----
@@ -105,11 +104,12 @@ function tokenPage(): string {
   for (let p = 0; p < opt.players; p++) {
     const c = PLAYER_COLORS[p];
     h += `<div class="tokrow"><span class="tl">プレイヤー${p + 1}</span><span class="pawn" style="background:${c}"></span>`;
-    for (let i = 0; i < BLOCKS + 1; i++) h += `<span class="blk" style="background:${c}"></span>`;
+    h += `<span class="blk trace" style="background:${c}">跡</span>`;
+    for (let i = 0; i < BLOCKS; i++) h += `<span class="blk" style="background:${c}"></span>`;
     h += `</div>`;
   }
   return `<section class="page"><h2>コマと積み木<small>（切って使う．厚紙に貼るか，手持ちのコマ・おはじきで代用してよい）</small></h2>${h}
-    <p class="note">丸＝コマ（1人1個），四角＝積み木（1人${BLOCKS}個＋予備1）．</p></section>`;
+    <p class="note">丸＝コマ（1人1個），「跡」＝片付けた跡（1人1個），無地の四角＝ストッパーの積み木（1人${BLOCKS}個）．</p></section>`;
 }
 
 // ---- ルール ----
@@ -120,12 +120,12 @@ function rulesPages(): string {
     return `<tr><td>${d.favorite ? '★' : ''}${d.name}</td><td>${d.text}</td><td>${d.cost ?? '初期'}</td><td>${d.weight}</td><td>${needBadges(k)}</td></tr>`;
   }).join('');
   return `<section class="page rules">
-    <h1>ミニマリスト <small>スライド版（試作 v0.3）</small></h1>
+    <h1>ミニマリスト <small>スライド版（試作 v0.4）</small></h1>
     <p class="lead">手札はありません．山札の上をめくるたびに，欲に流されてコマが動きます．好きなところで止めて，
       <b style="color:${INK.buy}">物欲</b>の行ならカードを取得，<b style="color:${INK.drop}">捨欲</b>の行なら今日めくったカードを排除．
       デッキを0枚にするか，お気に入りだけ${FINISH_FAVS}枚以下にしたら達成です．</p>
     <h3>内容物（このデータで印刷するもの）</h3>
-    <ul><li>個人ボード（人数分），コマ1個・積み木${BLOCKS}個（1人分）</li>
+    <ul><li>個人ボード（人数分），コマ1個・片付けた跡1個・ストッパーの積み木${BLOCKS}個（1人分）</li>
       <li>初期デッキ 1人5枚（欲しい2・ためらい1・迷い1・ガラクタ1）</li>
       <li>市場：片付けたい（売り切れない．多めに），ほかは各種類 人数と同じ枚数（最低2枚）</li></ul>
     <h3>準備</h3>
@@ -136,13 +136,12 @@ function rulesPages(): string {
       <li><b>めくる</b>か<b>止める</b>を繰り返す（<b>少なくとも1枚はめくる</b>）
         <ul><li>めくる：山札の上を1枚めくって「今日の流れ」（ボードの横に1列）に並べ，カードのとおりにコマを動かす．分かれ道は向きを選ぶ．
           山札が尽きたら捨札を混ぜて続けてよい</li>
-          <li>ボードの端では止まる．<b>積み木のマスに入ると，そのカードの動きはそこで終わる</b>（次のカードで出られる）</li></ul></li>
-      <li><b>止める</b>：<span style="background:${colColor(2)}">衝動</span>の列では，最後に動いた向きへ1・2マス余分に進んでから止まる（衝動3は端か積み木まで滑る）．
-        <span style="background:${colColor(-2)}">理性</span>2以上の列では，止めた後に1マス動いてよい．理性3では次の1枚を見てから止めるか決められる</li>
+          <li>ボードの端では止まる．<b>積み木は壁：積み木のマスには入れず，その手前で止まる</b>（重ならない）</li></ul></li>
+      <li><b>止める</b>：コマのいるマスの効果を使う．<span style="background:${colColor(2)}">衝動</span>の列は取得の額が増え，<span style="background:${colColor(-2)}">理性</span>の列は排除の量が増える（それ以外の効果はない）</li>
       <li>止まったマスの効果（マスの右下の数字）
         <ul><li><b style="color:${INK.buy}">物欲</b>：その額までコストを払って市場からカードを取得し，捨札へ．今日の流れの愛用品を回して（上下逆さ）お気に入りにしてもよい</li>
           <li><b style="color:${INK.drop}">捨欲</b>：その量まで，<b>今日の流れ</b>のカードを重さを払って排除（箱へ）．一番下の行なら捨札からも1枚．
-            排除したら，止まったマスに積み木を1個置く（${BLOCKS}個を超えたら一番古いものを動かす）</li></ul></li>
+            排除したら，<b>片付けた跡</b>を止まったマスへ移す（1人1個．次に排除するまでそのマスには入れない．START の上下左右で排除したら跡はボードから外す）</li></ul></li>
       <li>今日の流れのカードを捨札へ</li></ol>
     <h3>条件のあるカード（色の濃さ＝必要な段階）</h3>
     <ul><li><span class="badge" style="background:${colColor(2)};color:${INK.imp};border-color:${INK.imp}">衝動nで取得</span>：衝動n以上の列で止まらないと取得できない（高いもの・派手なものは衝動買い）</li>
