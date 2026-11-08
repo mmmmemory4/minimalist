@@ -1,7 +1,7 @@
 // スライド版の画面：ローカル（ボットと）とオンライン（部屋コードで人と．ボットも入れられる）
 
 import './ui.css';
-import { ARROW, CARD_SETS, Dir, MARKET, SCARDS, SKind, UNLIMITED_KINDS, canBuyAt, canDropAt, marketFromChoice, needText } from './cards';
+import { ARROW, CARD_SETS, Dir, MARKET, SCARDS, STARTING, SKind, UNLIMITED_KINDS, canBuyAt, canDropAt, marketFromChoice, needText } from './cards';
 import { SMAX_SEATS, SRoomInfo, SServerMsg } from './protocol';
 import {
   DEFAULT_BOARD, SBOARDS, SCard, SPlayer, SState, Walk, X_MAX, X_MIN, applySlide, bonus, cellPower,
@@ -96,7 +96,7 @@ function lobby() {
       ${optionsHTML()}
       <button id="start" class="primary" ${room.seats.length < 2 ? 'disabled' : ''}>ゲーム開始</button>
       ${room.seats.length < 2 ? '<p class="muted">2人以上（ボットを含む）で始められます</p>' : ''}`
-    : '<p class="muted">ホストが開始するのを待っています…</p>'}
+    : `<p class="muted">ホストが開始するのを待っています…（盤とカードセットはホストが選びます）</p>${allCardsHTML()}`}
     <p><button id="back">部屋を出る</button></p>
     <details><summary>ルールの要約</summary>${rulesHTML()}</details>
   </main>`;
@@ -126,7 +126,18 @@ function optionsHTML(): string {
     <label>市場のカードセット <select id="set">${CARD_SETS.map(c => `<option value="${c.id}" ${c.id === set ? 'selected' : ''}>${c.label}</option>`).join('')}
       <option value="custom" ${set === 'custom' ? 'selected' : ''}>自分で選ぶ</option></select></label>
     <div id="setInfo" class="setinfo"></div>
-    <div id="custom" class="custom" ${set === 'custom' ? '' : 'hidden'}>${MARKET.map(k => `<label class="ck"><input type="checkbox" value="${k}" ${custom.has(k) || UNLIMITED_KINDS.includes(k) ? 'checked' : ''} ${UNLIMITED_KINDS.includes(k) ? 'disabled' : ''}>${SCARDS[k].perm ? '★' : ''}${SCARDS[k].name}<small>${SCARDS[k].cost}</small></label>`).join('')}</div>`;
+    <div id="custom" class="custom" ${set === 'custom' ? '' : 'hidden'}>${MARKET.map(k => `<label class="ckcard"><input type="checkbox" value="${k}" ${custom.has(k) || UNLIMITED_KINDS.includes(k) ? 'checked' : ''} ${UNLIMITED_KINDS.includes(k) ? 'disabled' : ''}>${cardHTML({ kind: k })}</label>`).join('')}</div>
+    ${startingHTML()}`;
+}
+
+/** 初期デッキ（全員同じ）の効果 */
+function startingHTML(): string {
+  return `<details class="startdeck"><summary>初期デッキ（全員同じ5枚）の効果</summary><div class="flow">${STARTING.map(([k, n]) => cardHTML({ kind: k }, '', '', n)).join('')}</div></details>`;
+}
+
+/** 開始前に，市場に並ぶカードの効果を全部見せる（ホスト以外の人向け） */
+function allCardsHTML(): string {
+  return `<details class="startdeck" open><summary>カードの効果（市場に並びうるカード）</summary><div class="flow">${MARKET.map(k => cardHTML({ kind: k })).join('')}</div></details>${startingHTML()}`;
 }
 
 function bindOptions() {
@@ -136,8 +147,10 @@ function bindOptions() {
     const v = setSel.value;
     app.querySelector<HTMLElement>('#custom')!.hidden = v !== 'custom';
     const cs = CARD_SETS.find(c => c.id === v);
-    const list = cs && cs.cards.length ? `<br>${cs.cards.map(k => `${SCARDS[k].perm ? '★' : ''}${SCARDS[k].name}`).join('・')}` : '';
-    app.querySelector<HTMLElement>('#setInfo')!.innerHTML = v === 'custom' ? '片付けたいは必ず入ります．ほかに4種類以上' : `${cs?.note ?? ''}${list}`;
+    // 選んだセットのカードを効果つきで並べる（ランダムは開始時に決まるので候補を全部）
+    const shown = v === 'random' ? MARKET : cs?.cards ?? [];
+    app.querySelector<HTMLElement>('#setInfo')!.innerHTML = v === 'custom' ? 'チェックしたカードが市場に並びます．片付けたいは必ず入ります．ほかに4種類以上'
+      : `${cs?.note ?? ''}${v === 'random' ? '<br>候補（この中からくじで選ぶ）：' : ''}<div class="flow setcards">${shown.map(k => cardHTML({ kind: k })).join('')}</div>`;
   };
   // 選んだものはすぐ保存する（部屋では人が入るたびに画面を描き直すので）
   setSel.onchange = () => { store.set('slide.set', setSel.value); info(); };
@@ -273,11 +286,11 @@ function boardHTML(p: SPlayer, big: boolean, clickCells: { x: number; y: number 
 function moveText(c: SCard) {
   return SCARDS[c.kind].text;
 }
-function cardHTML(c: SCard | { kind: SKind; id?: number }, extra = '', cls = '') {
+function cardHTML(c: SCard | { kind: SKind; id?: number }, extra = '', cls = '', count = 0) {
   const d = SCARDS[c.kind];
   const fav = !!d.perm;
   return `<div class="card ${cls} ${fav ? 'favc' : ''} ${d.cost === null ? 'startc' : ''}" ${'id' in c && c.id ? `data-id="${c.id}"` : ''} ${extra}>
-    <div class="ct"><b>${fav ? '★' : ''}${d.name}</b>${d.cost !== null ? `<span class="cost">${d.cost}</span>` : ''}</div>
+    <div class="ct"><b>${fav ? '★' : ''}${d.name}${count > 1 ? ` ×${count}` : ''}</b>${d.cost !== null ? `<span class="cost">${d.cost}</span>` : ''}</div>
     <div class="cm">${esc(d.text)}</div>
     ${needText(c.kind) ? `<div class="need">${needBadges(c.kind)}</div>` : ''}
     <div class="cw">${fav ? 'お気に入り（永続）' : `重さ${d.weight}`}</div></div>`;
