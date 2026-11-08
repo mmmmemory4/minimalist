@@ -217,7 +217,7 @@ function rulesHTML() {
   return `<ul>
     <li>毎手番，コマは中央から．少なくとも1枚めくる．山札が尽きたら捨札を混ぜてめくり続けられる</li>
     <li>縦：中央から上が<b>物欲</b>（その行の額まで取得），下が<b>捨欲</b>（その行の量まで排除．一番下は捨札からも1枚）．額・量は盤の左に書いてある</li>
-    <li>横：右ほど<b>衝動</b>（取得の額が+1/+2/+3），左ほど<b>理性</b>（排除の量が理性1は+0，理性2・3は+1）</li>
+    <li>横：右ほど<b>衝動</b>（取得の額+1/+2/+3，排除の量は±0/−1/−1），左ほど<b>理性</b>（排除の量±0/+1/+1，取得の額は−1/−1/−2）．左上・右下ほど少ない（0より下にはならない）</li>
     <li>高いもの・派手なもの（お気に入り・滑り台・氷の廊下・道連れ袋）は<b>衝動の列でないと取得できない</b>．
       思い入れのあるもの（ガラクタ・思い出の品・滑り台）は<b>理性の列でないと排除できない</b></li>
     <li>最後の1枚（持ち物が今日めくった1枚だけ）は，どこで止まっても手放せる</li>
@@ -237,13 +237,16 @@ function rowLabel(y: number) {
   const e = rowEffect(y, s!.board);
   return e.kind === 'buy' ? '物欲' : e.kind === 'remove' ? '捨欲' : 'スタート';
 }
+/** 列の増減の短い説明（例：額+2 量−1） */
+const signed = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '±0');
+function colFx(x: number) { return `額${signed(bonus(x, 'buy'))} 量${signed(bonus(x, 'remove'))}`; }
 function colLabel(x: number) { return x < 0 ? `理性${-x}` : x > 0 ? `衝動${x}` : '中'; }
 
 function boardHTML(p: SPlayer, big: boolean, clickCells: { x: number; y: number }[] = [], preview?: { x: number; y: number }) {
   const w = p.walk;
   const active = s!.players[s!.current] === p;
   let h = `<div class="board ${big ? 'big' : 'mini'}"><div class="corner"></div>`;
-  for (let x = X_MIN; x <= X_MAX; x++) h += `<div class="colh" style="--hb:${colColor(x) ?? 'transparent'};color:${colInk(x)}">${big ? colLabel(x) : x}${big && x > 0 ? `<small>額+${bonus(x, 'buy')}</small>` : ''}${big && x < 0 ? `<small>量+${bonus(x, 'remove')}</small>` : ''}</div>`;
+  for (let x = X_MIN; x <= X_MAX; x++) h += `<div class="colh" style="--hb:${colColor(x) ?? 'transparent'};color:${colInk(x)}">${big ? colLabel(x) : x}${big && x !== 0 ? `<small>${colFx(x)}</small>` : ''}</div>`;
   const b = s!.board;
   for (let y = yMax(b); y >= yMin(b); y--) {
     const e = rowEffect(y, b);

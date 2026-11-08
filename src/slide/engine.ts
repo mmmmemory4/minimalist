@@ -43,7 +43,16 @@ export function rowEffect(y: number, b: SBoard): { kind: 'buy' | 'remove' | 'non
 /** 理性の列の排除の上乗せ（理性1,2,3 → REASON_BONUS[0..2]） */
 export let REASON_BONUS = [0, 1, 1]; // v0.4.1：最初から量2・3に届かないように小さく
 export const setReasonBonus = (a: number[]) => { REASON_BONUS = a; };
-export const bonus = (x: number, kind: 'buy' | 'remove') => (kind === 'buy' ? Math.max(0, x) : x < 0 ? REASON_BONUS[-x - 1] : 0);
+/** 逆側の列の減り方（列1,2,3）：左上（理性の列の額）と右下（衝動の列の量）ほど少ない */
+export let BUY_PENALTY = [1, 1, 2];
+export let REMOVE_PENALTY = [0, 1, 1];
+export const setPenalty = (buy: number[], remove: number[]) => { BUY_PENALTY = buy; REMOVE_PENALTY = remove; };
+/** 列による増減：衝動の列は額+1/+2/+3・量−，理性の列は量+・額− */
+export const bonus = (x: number, kind: 'buy' | 'remove') => {
+  if (x === 0) return 0;
+  if (kind === 'buy') return x > 0 ? x : -BUY_PENALTY[-x - 1];
+  return x < 0 ? REASON_BONUS[-x - 1] : -REMOVE_PENALTY[x - 1];
+};
 
 export interface SCard { id: number; kind: SKind }
 
@@ -198,7 +207,7 @@ export const favCost = (p: SPlayer) => p.perms.reduce((n, k) => n + (SCARDS[k].c
 /** 止まったマスの効果の額・量（上乗せ込み） */
 export function cellPower(pos: Pos, b: SBoard): { kind: 'buy' | 'remove' | 'none'; amount: number } {
   const e = rowEffect(pos.y, b);
-  return e.kind === 'none' ? e : { kind: e.kind, amount: e.amount + bonus(pos.x, e.kind) };
+  return e.kind === 'none' ? e : { kind: e.kind, amount: Math.max(0, e.amount + bonus(pos.x, e.kind)) };
 }
 
 /** 排除の重さの合計（道連れ袋1枚につき，ほかの1枚の重さを0にできる．重いものから） */

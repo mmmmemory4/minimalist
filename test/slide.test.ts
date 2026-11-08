@@ -48,10 +48,12 @@ describe('スライド版', () => {
     expect(cellPower({ x: 2, y: 3 }, SHORT)).toEqual({ kind: 'buy', amount: 6 });
     expect(cellPower({ x: 0, y: 0 }, SHORT).kind).toBe('none');
     expect(cellPower({ x: 0, y: -1 }, SHORT)).toEqual({ kind: 'remove', amount: 1 });
-    expect(cellPower({ x: 1, y: -4 }, SHORT)).toEqual({ kind: 'remove', amount: 3 }); // 衝動は取得だけ
+    expect(cellPower({ x: 1, y: -4 }, SHORT)).toEqual({ kind: 'remove', amount: 3 }); // 衝動1は量±0
+    expect(cellPower({ x: 3, y: -1 }, SHORT)).toEqual({ kind: 'remove', amount: 0 }); // 右下ほど少ない（衝動3は量−1）
     expect(cellPower({ x: -1, y: -1 }, SHORT)).toEqual({ kind: 'remove', amount: 1 }); // 理性1は上乗せなし
     expect(cellPower({ x: -3, y: -1 }, SHORT)).toEqual({ kind: 'remove', amount: 2 }); // 理性2・3は+1（排除だけ）
-    expect(cellPower({ x: -2, y: 1 }, SHORT)).toEqual({ kind: 'buy', amount: 2 });
+    expect(cellPower({ x: -1, y: 1 }, SHORT)).toEqual({ kind: 'buy', amount: 1 }); // 左上ほど少ない（理性1は額−1）
+    expect(cellPower({ x: -3, y: 1 }, SHORT)).toEqual({ kind: 'buy', amount: 0 }); // 理性3は額−2（0より下にはならない）
     // ゆっくり：物欲 1,1,2,2,3,3,4／捨欲 0,1,1,2,3
     expect([1, 2, 3, 4, 5, 6, 7].map(y => cellPower({ x: 0, y }, STD).amount)).toEqual([1, 1, 2, 2, 3, 3, 4]);
     expect([-1, -2, -3, -4, -5].map(y => cellPower({ x: 0, y }, STD).amount)).toEqual([0, 1, 1, 2, 3]);

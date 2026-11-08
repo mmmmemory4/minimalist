@@ -4,7 +4,7 @@
 import './print.css';
 import { ARROW, LIGHT_PER, MARKET, MEMO_AT, SCARDS, SKind, STARTING, UNLIMITED_KINDS } from './cards';
 import {
-  BLOCKS, SBOARDS, SBoard, X_MAX, X_MIN, bonus, isDeep, noBlockZone, rowEffect, yMax, yMin,
+  BLOCKS, SBOARDS, SBoard, X_MAX, X_MIN, bonus, cellPower, isDeep, noBlockZone, rowEffect, yMax, yMin,
 } from './engine';
 import { INK, colColor, colInk, needBadges, rowColor } from './colors';
 
@@ -69,8 +69,8 @@ function cardPages(): string {
 function colHead(x: number): string {
   const name = x < 0 ? `理性${-x}` : x > 0 ? `衝動${x}` : '中';
   const fx: string[] = [];
-  if (x > 0) fx.push(`額+${bonus(x, 'buy')}`);
-  if (x < 0) fx.push(`量+${bonus(x, 'remove')}`);
+  const sg = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '±0');
+  if (x !== 0) fx.push(`額${sg(bonus(x, 'buy'))}`, `量${sg(bonus(x, 'remove'))}`);
   return `<div class="bch" style="background:${colColor(x) ?? '#fff'};color:${colInk(x)}"><b>${name}</b><small>${fx.join('<br>')}</small></div>`;
 }
 
@@ -89,7 +89,7 @@ function boardPage(b: SBoard): string {
       const rc = rowColor(e.kind, e.amount), cc = colColor(x) ?? rc;
       const start = x === 0 && y === 0;
       const nz = !start && noBlockZone({ x, y }) ? ' nz' : '';
-      g += `<div class="bc${nz}" style="background:linear-gradient(to top, ${cc} 0 30%, ${rc} 30%)">${start ? '<span class="st">START</span>' : ''}${e.kind !== 'none' ? `<span class="amt">${e.kind === 'buy' ? '額' : '量'}${e.amount + bonus(x, e.kind)}</span>` : ''}</div>`;
+      g += `<div class="bc${nz}" style="background:linear-gradient(to top, ${cc} 0 30%, ${rc} 30%)">${start ? '<span class="st">START</span>' : ''}${e.kind !== 'none' ? `<span class="amt">${e.kind === 'buy' ? '額' : '量'}${cellPower({ x, y }, b).amount}</span>` : ''}</div>`;
     }
   }
   g += `</div>`;
@@ -121,7 +121,7 @@ function rulesPages(): string {
     return `<tr><td>${d.perm ? '★' : ''}${d.name}</td><td>${d.text}</td><td>${d.cost ?? '初期'}</td><td>${d.perm ? '−' : d.weight}</td><td>${needBadges(k)}</td></tr>`;
   }).join('');
   return `<section class="page rules">
-    <h1>ミニマリスト <small>スライド版（試作 v0.5）</small></h1>
+    <h1>ミニマリスト <small>スライド版（試作 v0.6）</small></h1>
     <p class="lead">手札はありません．山札の上をめくるたびに，欲に流されてコマが動きます．好きなところで止めて，
       <b style="color:${INK.buy}">物欲</b>の行ならカードを取得，<b style="color:${INK.drop}">捨欲</b>の行なら今日めくったカードを排除．
       カードを0枚にしたら達成です．★お気に入りは取ったら自分の前に置かれ，効果がずっと続きます（数えない）．</p>
@@ -138,7 +138,7 @@ function rulesPages(): string {
         <ul><li>めくる：山札の上を1枚めくって「今日の流れ」（ボードの横に1列）に並べ，カードのとおりにコマを動かす．分かれ道は向きを選ぶ．
           山札が尽きたら捨札を混ぜて続けてよい</li>
           <li>ボードの端では止まる．<b>積み木は壁：積み木のマスには入れず，その手前で止まる</b>（重ならない）</li></ul></li>
-      <li><b>止める</b>：コマのいるマスの効果を使う．<span style="background:${colColor(2)}">衝動</span>の列は取得の額が増え，<span style="background:${colColor(-2)}">理性</span>の列は排除の量が増える（それ以外の効果はない）</li>
+      <li><b>止める</b>：コマのいるマスの効果を使う．<span style="background:${colColor(2)}">衝動</span>の列は取得の額が増えて排除の量が減り，<span style="background:${colColor(-2)}">理性</span>の列は排除の量が増えて取得の額が減る（左上・右下ほど少ない．マスの右下の数字がそのまま使える額・量）</li>
       <li>止まったマスの効果（マスの右下の数字）
         <ul><li><b style="color:${INK.buy}">物欲</b>：その額までコストを払って市場からカードを取得し，捨札へ．<b>★お気に入りは自分の前に置く</b>（山札に入らない．同じものは1枚まで）</li>
           <li><b style="color:${INK.drop}">捨欲</b>：その量まで，<b>今日の流れ</b>のカードを重さを払って排除（箱へ）．一番下の行なら捨札からも1枚．

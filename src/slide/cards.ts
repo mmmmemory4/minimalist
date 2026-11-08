@@ -59,7 +59,7 @@ const step = (dirs: Dir[], n: number, o: { light?: boolean; stop?: boolean } = {
 
 export const SCARDS: Record<SKind, SCardDef> = {
   WANT:   { kind: 'WANT',   name: '欲しい',     move: step(['U'], 1), cost: null, weight: 1, text: '↑1' },
-  HES:    { kind: 'HES',    name: 'ためらい',   move: step(['R'], 1, { stop: true }), cost: null, weight: 1, text: '→1，そこで必ず止まる' },
+  HES:    { kind: 'HES',    name: 'ためらい',   move: step(['R', 'L'], 1, { stop: true }), cost: null, weight: 1, dropNeed: 1, text: '→1か←1，そこで必ず止まる' },
   DOUBT:  { kind: 'DOUBT',  name: '迷い',       move: step(['L'], 1), cost: null, weight: 1, text: '←1' },
   JUNK:   { kind: 'JUNK',   name: 'ガラクタ',   move: { t: 'none' }, cost: null, weight: 2, dropNeed: 1, text: '動かない．捨てる重さ2' },
   DOWN:   { kind: 'DOWN',   name: '片付けたい', move: step(['D'], 1), cost: 1, weight: 1, text: '↓1' },

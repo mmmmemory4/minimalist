@@ -4,13 +4,14 @@
 
 import { SCARDS, SKind, marketFromChoice } from '../src/slide/cards';
 import { SPRESETS, SBOT_LABELS, playSlideTurn } from '../src/slide/bot';
-import { SBOARDS, SState, newSlideGame, ownedCards, setReasonBonus } from '../src/slide/engine';
+import { SBOARDS, SState, newSlideGame, ownedCards, setPenalty, setReasonBonus } from '../src/slide/engine';
 import { rngFrom } from './common';
 
 const GAMES = Number(process.argv[2] ?? 600);
 const ONLY = (process.env.TYPES ?? '').split(',').filter(Boolean);
 const BOARD = process.env.BOARD ?? 'basic';
 // 試しに理性の上乗せ・捨欲の目盛りを変える：RB=0,1,1 REM=1,1,2,3
+if (process.env.BPEN || process.env.RPEN) setPenalty((process.env.BPEN ?? '0,0,0').split(',').map(Number), (process.env.RPEN ?? '0,0,0').split(',').map(Number));
 if (process.env.RB) setReasonBonus(process.env.RB.split(',').map(Number));
 if (process.env.REM) SBOARDS.basic.remove = process.env.REM.split(',').map(Number);
 // 試しにコストを変える：COSTS=CALM=3,DOWN2=3
