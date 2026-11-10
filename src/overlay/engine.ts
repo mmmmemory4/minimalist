@@ -1,0 +1,369 @@
+// オーバーレイ版のルール．仕様：Memories/01_BoardGames/ミニマリスト_オーバーレイ版_仕様.md
+//   盤：横 x = −3（理性3）〜3（衝動3）．縦は中央 y = 0 から上が物欲，下が捨欲．毎手番 START (0,0) から
+//   手番：袋からタイルを引く → 今いるマスに置く → タイルの矢印の向きへ1マス出る，を繰り返し，好きなところで止める
+//   止まったマスの「一番上に見えている効果」（タイルがあればタイル，なければ盤の印刷）で取得か排除をする
+//   コマは無い．「今いるマス」は最後に置いたタイルの矢印の先（画面ではそのマスを光らせる）
+
+import { DELTA, DIRS, Dir, Fx, HES_FX, LIGHT_MAX, LIGHT_PER, MARKET, NO_FX, OKind, TILES, UNLIMITED_KINDS, isPerm, startingBag } from './tiles';
+import { shuffle } from '../engine/rng';
+
+export const X_MIN = -3, X_MAX = 3;
+
+/** 盤の縦の目盛り：buy[i] は中央から i+1 行上の額，remove[i] は i+1 行下の量（一番下は捨て山からも1枚） */
+export interface OBoard { name: string; label: string; buy: number[]; remove: number[] }
+export const OBOARDS: Record<string, OBoard> = {
+  basic: { name: 'basic', label: '基本（物欲 2,3,4／捨欲 1,2,3,3）', buy: [2, 3, 4], remove: [1, 2, 3, 3] },
+  slow: { name: 'slow', label: 'ゆっくり（物欲 1,1,2,2,3,3,4／捨欲 0,1,1,2,3）', buy: [1, 1, 2, 2, 3, 3, 4], remove: [0, 1, 1, 2, 3] },
+};
+export const yMax = (b: OBoard) => b.buy.length;
+export const yMin = (b: OBoard) => -b.remove.length;
+export const isDeep = (y: number, b: OBoard) => y === yMin(b);
+export const MAX_ROUNDS = 60;
+export const UNLIMITED = 99;
+/** 中央の行（START 以外）の額 */
+export const MID_BUY = 2;
+
+// ---- 開始時に切り替えられるルール ----
+
+export interface Rules {
+  /** ためらい：first = 出たらそこで終わり（タイルは効果なし）／second = 2枚目が出たら終わり（タイルは額3） */
+  hes: 'first' | 'second';
+  /** 初期の袋のためらいの枚数 */
+  hesCount: number;
+  /** 片付けた跡の壁：排除したマスに跡が残り，入れなくなる */
+  traces: boolean;
+  board: string;
+  /** 盤の印刷の列の増減：v06 = 左上・右下ほど少ない／bonus = 上乗せだけ／none = なし */
+  cols: 'v06' | 'bonus' | 'none';
+  /** 取得・排除の条件（衝動nで取得／理性nで排除） */
+  needs: boolean;
+  /** 最後の1枚はどこで止まっても手放せる */
+  lastCard: boolean;
+  /** 袋が尽きたら捨て山を混ぜて引き続けられる */
+  refill: boolean;
+  /** 中央の行（START 以外）に額2 */
+  midBuy: boolean;
+}
+export const DEFAULT_RULES: Rules = { hes: 'first', hesCount: 2, traces: false, board: 'basic', cols: 'v06', needs: true, lastCard: true, refill: true, midBuy: true };
+
+/** 外から来たルールを整える（不正な値は既定に） */
+export function normRules(r: Partial<Rules> | undefined | null): Rules {
+  const d = DEFAULT_RULES, x = r ?? {};
+  const bool = (v: unknown, def: boolean) => (typeof v === 'boolean' ? v : def);
+  return {
+    hes: x.hes === 'second' ? 'second' : x.hes === 'first' ? 'first' : d.hes,
+    hesCount: x.hesCount === 1 || x.hesCount === 2 || x.hesCount === 3 ? x.hesCount : d.hesCount,
+    traces: bool(x.traces, d.traces),
+    board: typeof x.board === 'string' && OBOARDS[x.board] ? x.board : d.board,
+    cols: x.cols === 'bonus' || x.cols === 'none' || x.cols === 'v06' ? x.cols : d.cols,
+    needs: bool(x.needs, d.needs),
+    lastCard: bool(x.lastCard, d.lastCard),
+    refill: bool(x.refill, d.refill),
+    midBuy: bool(x.midBuy, d.midBuy),
+  };
+}
+
+// ---- 盤 ----
+
+export interface Pos { x: number; y: number }
+export const samePos = (a: Pos, b: Pos) => a.x === b.x && a.y === b.y;
+export const inBoard = (p: Pos, b: OBoard) => p.x >= X_MIN && p.x <= X_MAX && p.y >= yMin(b) && p.y <= yMax(b);
+/** START とその上下左右には片付けた跡を置かない（道がふさがらないように） */
+export const noTraceZone = (p: Pos) => Math.abs(p.x) + Math.abs(p.y) <= 1;
+
+const BUY_PENALTY = [1, 1, 2], REMOVE_PENALTY = [0, 1, 1], REASON_BONUS = [0, 1, 1];
+/** 盤の印刷の列の増減 */
+export function colMod(x: number, kind: 'buy' | 'remove', cols: Rules['cols']): number {
+  if (x === 0 || cols === 'none') return 0;
+  const v = kind === 'buy' ? (x > 0 ? x : -BUY_PENALTY[-x - 1]) : (x < 0 ? REASON_BONUS[-x - 1] : -REMOVE_PENALTY[x - 1]);
+  return cols === 'bonus' ? Math.max(0, v) : v;
+}
+
+/** 盤に印刷してある効果（列の増減込み） */
+export function printedFx(pos: Pos, b: OBoard, rules: Rules): Fx {
+  if (pos.y === 0) return pos.x !== 0 && rules.midBuy ? { kind: 'buy', amount: MID_BUY } : NO_FX;
+  const kind = pos.y > 0 ? 'buy' : 'remove';
+  const base = pos.y > 0 ? b.buy[pos.y - 1] : b.remove[-pos.y - 1];
+  return { kind, amount: Math.max(0, base + colMod(pos.x, kind, rules.cols)) };
+}
+
+export interface Tile { id: number; kind: OKind }
+/** 盤に置いたタイル（置いた順） */
+export interface Placed extends Tile { pos: Pos }
+
+/** 手番中の歩み（ボットの先読みでも使う） */
+export interface Walk { pos: Pos; placed: Placed[]; hes: number }
+/** 歩みに関わる，手番中は変わらないもの */
+export interface Env { rules: Rules; board: OBoard; traces: Pos[]; perms: OKind[]; removed: number }
+
+/** タイルを置いたマスの効果 */
+export function tileFx(kind: OKind, env: Pick<Env, 'rules' | 'removed'>): Fx {
+  if (kind === 'HES') return env.rules.hes === 'second' ? HES_FX : NO_FX;
+  if (kind === 'LIGHT') return { kind: 'remove', amount: Math.min(LIGHT_MAX, Math.floor(env.removed / LIGHT_PER)) };
+  return TILES[kind].fx;
+}
+
+/** そのマスの一番上のタイル */
+export const topTile = (placed: Placed[], pos: Pos): Placed | undefined => {
+  for (let i = placed.length - 1; i >= 0; i--) if (samePos(placed[i].pos, pos)) return placed[i];
+  return undefined;
+};
+export const stackAt = (placed: Placed[], pos: Pos) => placed.filter(t => samePos(t.pos, pos));
+
+/** そのマスで止まったときの効果：一番上のタイル，なければ盤の印刷．こだわりは +1 */
+export function effectAt(env: Env, placed: Placed[], pos: Pos): Fx {
+  const top = topTile(placed, pos);
+  const fx = top ? tileFx(top.kind, env) : printedFx(pos, env.board, env.rules);
+  return fx.kind !== 'none' && env.perms.includes('KODAWARI') ? { kind: fx.kind, amount: fx.amount + 1 } : fx;
+}
+
+/** 出られる向き（コンパスがあれば矢印のあるタイルは好きな向き） */
+export function dirsOf(kind: OKind, env: Env): Dir[] {
+  const d = TILES[kind].dirs;
+  return d.length && env.perms.includes('COMPASS') ? DIRS : d;
+}
+export const step = (pos: Pos, dir: Dir): Pos => ({ x: pos.x + DELTA[dir][0], y: pos.y + DELTA[dir][1] });
+/** その向きへ出られるか（盤の外・片付けた跡の壁へは出られず，置いたタイルの上に残る） */
+export const canMove = (env: Env, pos: Pos, dir: Dir) => {
+  const n = step(pos, dir);
+  return inBoard(n, env.board) && !(env.rules.traces && env.traces.some(t => samePos(t, n)));
+};
+
+/** タイルを今いるマスに置く（まだ出ない） */
+export function putTile(w: Walk, tile: Tile): void {
+  w.placed.push({ id: tile.id, kind: tile.kind, pos: { ...w.pos } });
+}
+/** 置いたタイルから dir へ出る（null は動かない）．戻り値：そこで必ず止まるか（ためらい） */
+export function leaveTile(env: Env, w: Walk, kind: OKind, dir: Dir | null): boolean {
+  if (dir && canMove(env, w.pos, dir)) w.pos = step(w.pos, dir);
+  if (kind !== 'HES') return false;
+  w.hes++;
+  return env.rules.hes === 'first' || w.hes >= 2;
+}
+
+// ---- ゲームの状態 ----
+
+export type TurnPhase = 'move' | 'branch' | 'resolve';
+
+export interface OPlayer {
+  name: string;
+  isBot: boolean;
+  botType?: string;
+  bag: Tile[];
+  discard: Tile[];
+  /** 今日の流れ：この手番に盤へ置いたタイル（置いた順） */
+  placed: Placed[];
+  /** 今いるマス（止めたらこのマスの効果） */
+  pos: Pos;
+  /** この手番に出たためらいの枚数 */
+  hes: number;
+  perms: OKind[];
+  /** 片付けた跡（ルールで壁にしたときだけ使う） */
+  traces: Pos[];
+  removed: number;
+  bought: number;
+  finished: boolean;
+}
+
+export interface OState {
+  players: OPlayer[];
+  market: Partial<Record<OKind, number>>;
+  current: number;
+  round: number;
+  phase: 'play' | 'over';
+  turn: TurnPhase;
+  winners: number[];
+  log: string[];
+  rng: number;
+  nextId: number;
+  board: OBoard;
+  rules: Rules;
+}
+
+export type OAction =
+  | { type: 'draw' }
+  | { type: 'stop' }
+  | { type: 'branch'; dir: Dir }
+  /** roomba：ルンバで排除する1枚 */
+  | { type: 'resolve'; buy: OKind[]; remove: number[]; roomba?: number };
+
+export class ORuleError extends Error {}
+
+export function newOverlayGame(
+  setup: { name: string; isBot?: boolean; botType?: string }[], seed: number, opts: { market?: OKind[]; rules?: Partial<Rules> } = {},
+): OState {
+  const rules = normRules(opts.rules);
+  const s: OState = {
+    players: [], market: {}, current: 0, round: 1, phase: 'play', turn: 'move', winners: [], log: [], rng: seed, nextId: 1,
+    board: OBOARDS[rules.board], rules,
+  };
+  for (const k of opts.market ?? MARKET) s.market[k] = UNLIMITED_KINDS.includes(k) ? UNLIMITED : Math.max(2, setup.length);
+  for (const p of setup) {
+    const bag: Tile[] = [];
+    for (const [k, n] of startingBag(rules.hesCount)) for (let i = 0; i < n; i++) bag.push({ id: s.nextId++, kind: k });
+    shuffle(bag, s);
+    s.players.push({ name: p.name, isBot: !!p.isBot, botType: p.botType, bag, discard: [], placed: [], pos: { x: 0, y: 0 }, hes: 0, perms: [], traces: [], removed: 0, bought: 0, finished: false });
+  }
+  s.log.push('ゲーム開始');
+  return s;
+}
+
+export const envOf = (s: OState, p: OPlayer): Env => ({ rules: s.rules, board: s.board, traces: p.traces, perms: p.perms, removed: p.removed });
+export const ownedTiles = (p: OPlayer): Tile[] => [...p.bag, ...p.discard, ...p.placed];
+/** 最後の1枚：持ち物がこの手番に置いた1枚だけ */
+export const isLastCard = (p: OPlayer) => !p.bag.length && !p.discard.length && p.placed.length === 1;
+export const isDone = (p: OPlayer) => ownedTiles(p).length === 0;
+export const favCost = (p: OPlayer) => p.perms.reduce((n, k) => n + (TILES[k].cost ?? 0), 0);
+/** まだ引けるか */
+export const canDraw = (p: OPlayer, rules: Rules) => p.bag.length > 0 || (rules.refill && p.discard.length > 0);
+/** 今止めたときの効果 */
+export const hereFx = (s: OState, p: OPlayer): Fx => effectAt(envOf(s, p), p.placed, p.pos);
+
+export const canBuyAt = (k: OKind, x: number, rules: Rules) => !rules.needs || (TILES[k].buyNeed ?? 0) <= Math.max(0, x);
+export const canDropAt = (k: OKind, x: number, rules: Rules) => !rules.needs || (TILES[k].dropNeed ?? 0) <= Math.max(0, -x);
+
+/** 排除の重さの合計（道連れ袋1枚につき，ほかの1枚の重さを0にできる．重いものから） */
+export function removeLoad(tiles: Tile[]): number {
+  const drags = tiles.filter(c => TILES[c.kind].drag).length;
+  const others = tiles.filter(c => !TILES[c.kind].drag).map(c => TILES[c.kind].weight).sort((a, b) => b - a);
+  return drags + others.slice(drags).reduce((n, w) => n + w, 0);
+}
+/** 捨て山から排除できる枚数（一番下の行で1枚．大容量ゴミ袋なら量の枚数を足す） */
+export const discardLimit = (p: OPlayer, amount: number, deep: boolean) => (deep ? 1 : 0) + (p.perms.includes('BAG') ? amount : 0);
+
+export function applyOverlay(s: OState, seat: number, a: OAction): void {
+  if (s.phase !== 'play') throw new ORuleError('ゲームは終了しています');
+  if (seat !== s.current) throw new ORuleError('あなたの手番ではありません');
+  const p = s.players[seat];
+  const env = envOf(s, p);
+  switch (a.type) {
+    case 'draw': {
+      if (s.turn !== 'move') throw new ORuleError('今は引けません');
+      if (!canDraw(p, s.rules)) throw new ORuleError('袋が空です．止めてください');
+      if (!p.bag.length) refill(s, p);
+      const tile = p.bag.pop()!;
+      putTile(p, tile);
+      const dirs = dirsOf(tile.kind, env);
+      if (dirs.length > 1) { s.turn = 'branch'; return; }
+      if (leaveTile(env, p, tile.kind, dirs[0] ?? null)) s.turn = 'resolve';
+      return;
+    }
+    case 'branch': {
+      if (s.turn !== 'branch') throw new ORuleError('向きを選ぶ場面ではありません');
+      const tile = p.placed[p.placed.length - 1];
+      if (!dirsOf(tile.kind, env).includes(a.dir)) throw new ORuleError('その向きには出られません');
+      s.turn = leaveTile(env, p, tile.kind, a.dir) ? 'resolve' : 'move';
+      return;
+    }
+    case 'stop': {
+      if (s.turn !== 'move') throw new ORuleError('今は止められません');
+      if (!p.placed.length && canDraw(p, s.rules)) throw new ORuleError('少なくとも1枚引いてください');
+      s.turn = 'resolve';
+      return;
+    }
+    case 'resolve': {
+      if (s.turn !== 'resolve') throw new ORuleError('まだ止まっていません');
+      resolve(s, p, a);
+      return;
+    }
+  }
+}
+
+function resolve(s: OState, p: OPlayer, a: { buy: OKind[]; remove: number[]; roomba?: number }): void {
+  const pos = p.pos;
+  const power = hereFx(s, p);
+  if (power.kind !== 'buy' && a.buy.length) throw new ORuleError('額のマスでしか取得できません');
+  let total = 0;
+  const need: Partial<Record<OKind, number>> = {};
+  for (const k of a.buy) {
+    const cost = TILES[k]?.cost;
+    if (cost == null || s.market[k] === undefined) throw new ORuleError('市場にないタイルです');
+    if (isPerm(k) && (p.perms.includes(k) || a.buy.filter(x => x === k).length > 1)) throw new ORuleError('同じお気に入りは1枚まで');
+    if (!canBuyAt(k, pos.x, s.rules)) throw new ORuleError(`${TILES[k].name}は衝動${TILES[k].buyNeed}以上の列でないと取得できません`);
+    total += cost;
+    need[k] = (need[k] ?? 0) + 1;
+  }
+  for (const [k, n] of Object.entries(need)) if ((s.market[k as OKind] ?? 0) < n!) throw new ORuleError(`${TILES[k as OKind].name}は売り切れです`);
+  if (total > power.amount) throw new ORuleError(`額${power.amount}を超えています`);
+
+  const ids = [...new Set(a.remove)];
+  const fromFlow = ids.map(id => p.placed.find(c => c.id === id)).filter(Boolean) as Tile[];
+  const fromDiscard = ids.map(id => p.discard.find(c => c.id === id)).filter(Boolean) as Tile[];
+  if (fromFlow.length + fromDiscard.length !== ids.length) throw new ORuleError('この手番に置いたタイルしか排除できません');
+  const deep = isDeep(pos.y, s.board);
+  if (fromDiscard.length > (power.kind === 'remove' ? discardLimit(p, power.amount, deep) : 0)) throw new ORuleError('捨て山から排除できる枚数を超えています');
+  const last = s.rules.lastCard && isLastCard(p) && fromFlow.length === 1 && !fromDiscard.length;
+  if (!last) {
+    if (power.kind !== 'remove' && ids.length) throw new ORuleError('量のマスでしか排除できません');
+    const hard = [...fromFlow, ...fromDiscard].find(c => !canDropAt(c.kind, pos.x, s.rules));
+    if (hard) throw new ORuleError(`${TILES[hard.kind].name}は理性${TILES[hard.kind].dropNeed}以上の列でないと排除できません`);
+    const load = p.perms.includes('BIGDAY') ? 0 : removeLoad(fromFlow);
+    if (power.kind === 'remove' && load > power.amount) throw new ORuleError(`量${power.amount}を超えています`);
+  }
+  if (a.roomba !== undefined && a.roomba !== null) {
+    if (!p.perms.includes('ROOMBA')) throw new ORuleError('ルンバを持っていません');
+    if (!p.placed.some(c => c.id === a.roomba) || ids.includes(a.roomba)) throw new ORuleError('ルンバで排除できるのは置いたタイルの1枚です');
+  }
+
+  for (const k of a.buy) {
+    if (!UNLIMITED_KINDS.includes(k)) s.market[k]!--;
+    if (isPerm(k)) p.perms.push(k);
+    else p.discard.push({ id: s.nextId++, kind: k });
+    p.bought++;
+  }
+  const gone = new Set(a.roomba != null ? [...ids, a.roomba] : ids);
+  p.placed = p.placed.filter(c => !gone.has(c.id));
+  p.discard = p.discard.filter(c => !gone.has(c.id));
+  p.removed += gone.size;
+  if (s.rules.traces && ids.length && !noTraceZone(pos) && !p.traces.some(t => samePos(t, pos))) p.traces.push({ ...pos });
+
+  const parts = [`${p.name}：(${pos.x},${pos.y})で止まった`];
+  if (power.kind !== 'none') parts.push(`${power.kind === 'buy' ? '額' : '量'}${power.amount}`);
+  if (ids.length) parts.push(`${ids.length}枚排除`);
+  if (a.buy.length) parts.push(`取得 ${a.buy.map(k => TILES[k].name).join('・')}`);
+  if (a.roomba != null) parts.push('ルンバで1枚排除');
+  s.log.push(parts.join(' / '));
+  endTurn(s, p);
+}
+
+function endTurn(s: OState, p: OPlayer): void {
+  // 盤のタイルを全部はがして捨て山へ
+  p.discard.push(...p.placed.map(c => ({ id: c.id, kind: c.kind })));
+  p.placed = [];
+  p.pos = { x: 0, y: 0 };
+  p.hes = 0;
+  if (isDone(p) && !p.finished) {
+    p.finished = true;
+    s.log.push(`★ ${p.name}が片付けを終えた！`);
+  }
+  if (s.current + 1 >= s.players.length) {
+    const done = s.players.map((q, i) => ({ q, i })).filter(x => x.q.finished);
+    if (done.length) {
+      const best = Math.max(...done.map(x => x.q.removed));
+      let win = done.filter(x => x.q.removed === best);
+      const fc = Math.max(...win.map(x => favCost(x.q)));
+      win = win.filter(x => favCost(x.q) === fc);
+      s.winners = win.map(x => x.i);
+      s.phase = 'over';
+      s.log.push(`ゲーム終了：${s.winners.map(i => s.players[i].name).join('・')}の${s.winners.length > 1 ? '共同勝利' : '勝利'}`);
+      return;
+    }
+    if (s.round >= MAX_ROUNDS) {
+      s.phase = 'over';
+      s.log.push('ゲーム終了：規定ラウンドに達したため引き分け');
+      return;
+    }
+    s.round++;
+    s.current = 0;
+  } else s.current++;
+  s.turn = 'move';
+  const q = s.players[s.current];
+  if (!q.bag.length) refill(s, q);
+}
+
+/** 捨て山を袋へ戻して混ぜる */
+function refill(s: OState, p: OPlayer): void {
+  p.bag = p.discard;
+  p.discard = [];
+  shuffle(p.bag, s);
+}
