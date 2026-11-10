@@ -188,3 +188,5 @@ body.myturn::before { content: ''; position: fixed; inset: 0; pointer-events: no
 .btns { display: flex; gap: 10px; flex-wrap: wrap; } .panel .chips { margin-bottom: 10px; }
 .meter { font-weight: 700; background: var(--bg2); border-radius: 12px; padding: 1px 10px; white-space: nowrap; } .meter.over { color: var(--rm); }
 .log { font-size: 12px; color: var(--muted); padding-left: 20px; margin: 0; }
+
+.chipline { font-size: 12px; color: var(--muted); } .chipline b { color: var(--gold); letter-spacing: .1em; }

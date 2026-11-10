@@ -60,7 +60,7 @@ const t = (kind: OKind, name: string, dirs: Dir[], fx: Fx, cost: number | null, 
 export const TILES: Record<OKind, TileDef> = {
   WANT:   t('WANT', '欲しい', ['U'], buy(1), null, { heavy: 2 }),
   DOUBT:  t('DOUBT', '迷い', ['L'], buy(1), null),
-  JUNK:   t('JUNK', 'ガラクタ', ['U', 'D', 'L', 'R'], NO_FX, null, { weight: 2, heavy: 3, dropNeed: 1, note: '矢印はルールで変わる（→だけ／4方向）' }),
+  JUNK:   t('JUNK', 'ガラクタ', ['U', 'D', 'L', 'R'], NO_FX, null, { weight: 2, dropNeed: 1, note: '矢印はルールで変わる（→だけ／4方向）' }),
   HES:    t('HES', 'ためらい', ['R', 'L'], NO_FX, null, { dropNeed: 1, note: 'ルールで変わる：出たらそこで終わり（効果なし）／2枚目が出たら終わり（額3）' }),
   DOWN:   t('DOWN', '片付けたい', ['D'], NO_FX, 1),
   BR:     t('BR', '分かれ道', ['D', 'R'], buy(2), 3),

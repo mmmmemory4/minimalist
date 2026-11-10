@@ -3,8 +3,8 @@
 
 import { Dir, OKind, TILES, isPerm, weightOf } from './tiles';
 import {
-  Env, OAction, OPlayer, OState, Tile, Walk, applyOverlay, canBuyAt, canDraw, canDropAt, dirsOf, discardLimit, effectAt, envOf,
-  isDeep, isLastCard, leaveTile, ownedTiles, putTile, removeLoad,
+  Env, OAction, OPlayer, OState, Tile, Walk, applyOverlay, canBuyAt, canDraw, canDropAt, chipNeed, dirsOf, discardLimit, effectAt, envOf,
+  isDeep, isLastCard, leaveTile, ownedTiles, putTile,
 } from './engine';
 
 export interface OGenome {
@@ -63,9 +63,14 @@ export function planRemove(c: Ctx, flow: Tile[], amount: number, deep: boolean, 
   const owned = ownedTiles(c.p);
   const big = c.p.perms.includes('BIGDAY');
   const rules = c.s.rules;
-  const cand = flow.filter(t => canDropAt(t.kind, xcol, rules)).sort((a, b) => trashScore(c, b) - trashScore(c, a));
+  // 決心チップは，捨てたいタイル（初期タイル・型に無いタイル）にだけ使う
+  const chips = rules.chips ? c.p.chips ?? 0 : 0;
+  const cand = flow.filter(t => canDropAt(t.kind, xcol, rules) || (chips > 0 && trashScore(c, t) >= 5)).sort((a, b) => trashScore(c, b) - trashScore(c, a));
   const chosen: Tile[] = [];
-  for (const t of cand) if (big || removeLoad([...chosen, t], rules) <= amount) chosen.push(t);
+  for (const t of cand) {
+    const need = chipNeed([...chosen, t], [], xcol, amount, rules, big);
+    if (need === 0 || (need <= chips && trashScore(c, t) >= 5)) chosen.push(t);
+  }
   const dn = discardLimit(c.p, amount, deep);
   const ds0 = c.p.discard.filter(t => canDropAt(t.kind, xcol, rules)).length;
   // 全部片付けられるなら全部（勝ち）．そうでなければ，型のタイルは残りが少なくなるまで取っておく

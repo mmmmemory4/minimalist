@@ -128,8 +128,8 @@ describe('オーバーレイ版', () => {
     expect(s.players[0].discard.map(t => t.kind).sort()).toEqual(['DOWN', 'UP2', 'WANT']);
   });
 
-  it('重いルール：欲しいは重さ2，ガラクタは重さ3で→だけ', () => {
-    const s = game();
+  it('重いルール：欲しいは重さ2，ガラクタは→だけ', () => {
+    const s = game({ chips: false });
     stack(s, 'WANT', 'DOWN', 'DOWN', 'JUNK');
     draw(s); draw(s); draw(s);
     const p = s.players[0];
@@ -172,6 +172,26 @@ describe('オーバーレイ版', () => {
     applyOverlay(t, 0, { type: 'resolve', buy: [], remove: [] });
     expect(q.removed).toBe(1);
     expect(ownedTiles(q).length).toBe(4);
+  });
+
+  it('決心チップ：排除できなかった手番にもらい，重さや条件の不足を埋められる', () => {
+    const s = game();
+    const p = s.players[0];
+    stack(s, 'WANT', 'DOUBT');
+    draw(s); applyOverlay(s, 0, { type: 'stop' });
+    applyOverlay(s, 0, { type: 'resolve', buy: [], remove: [] });
+    expect(p.chips).toBe(1);
+    s.current = 0; s.turn = 'move';
+    stack(s, 'DOWN', 'JUNK', 'WANT'); // ガラクタ（重さ2・理性1）を (1,-1) 量1・衝動1 で：重さ1＋条件1＝2枚必要
+    draw(s); draw(s);
+    expect(p.pos).toEqual({ x: 1, y: -1 });
+    applyOverlay(s, 0, { type: 'stop' });
+    const junk = p.placed.find(t => t.kind === 'JUNK')!;
+    expect(() => applyOverlay(s, 0, { type: 'resolve', buy: [], remove: [junk.id] })).toThrow();
+    p.chips = 2;
+    applyOverlay(s, 0, { type: 'resolve', buy: [], remove: [junk.id] });
+    expect(p.chips).toBe(0);
+    expect(p.removed).toBe(1);
   });
 
   it('片付けた跡の壁はルールで有効にしたときだけ', () => {

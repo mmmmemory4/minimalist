@@ -6,7 +6,7 @@ import { ARROW, Dir, Fx, MARKET, OKind, TILES, TILE_SETS, UNLIMITED_KINDS, dirsT
 import { OMAX_SEATS, ORoomInfo, OServerMsg } from './protocol';
 import {
   DEFAULT_RULES, OAction, OBOARDS, OPlayer, OState, Pos, Rules, Tile, X_MAX, X_MIN, applyOverlay, canBuyAt, canDraw, canDropAt, canMove,
-  dirsOf, discardLimit, envOf, favCost, hereFx, isDeep, isLastCard, newOverlayGame, normRules, ownedTiles, printedFx, removeLoad, samePos,
+  chipNeed, dirsOf, discardLimit, envOf, favCost, hereFx, isDeep, isLastCard, newOverlayGame, normRules, ownedTiles, printedFx, removeLoad, samePos,
   stackAt, step, tileFx, topTile, yMax, yMin,
 } from './engine';
 import { OBOT_LABELS, OPRESETS, chooseOverlayAction } from './bot';
@@ -146,7 +146,8 @@ const RULE_OPTS: { key: keyof Rules; label: string; choices: [string, string][] 
   { key: 'hes', label: 'ためらい', choices: [['first', '出たらそこで終わり（タイルは効果なし）'], ['second', '2枚目が出たら終わり（タイルは額3）']] },
   { key: 'hesCount', label: '初期の袋のためらい', choices: [['1', '1枚'], ['2', '2枚'], ['3', '3枚']] },
   { key: 'midBuy', label: '中央の行（START の左右）', choices: [['true', '額2（ためらいの最低保証）'], ['false', '効果なし']] },
-  { key: 'weights', label: '捨てる重さ', choices: [['heavy', '重い（欲しい2・ガラクタ3・↑へ行くタイル2）'], ['light', '軽い（ガラクタ2，ほかは1）']] },
+  { key: 'weights', label: '捨てる重さ', choices: [['heavy', '重い（欲しい2・↑へ行くタイル2・ガラクタ2）'], ['light', '軽い（ガラクタ2，ほかは1）']] },
+  { key: 'chips', label: '決心チップ', choices: [['true', 'あり（排除できなかった手番に1枚．重さ1か条件1段階に使える）'], ['false', 'なし']] },
   { key: 'junk', label: 'ガラクタの矢印', choices: [['right', '→だけ'], ['four', '4方向']] },
   { key: 'special', label: '特別なマス', choices: [['true', 'あり（捨欲の中の額マス・福袋・おまかせ処分）'], ['false', 'なし']] },
   { key: 'traces', label: '片付けた跡の壁', choices: [['false', 'なし'], ['true', 'あり（排除したマスに入れなくなる）']] },
@@ -229,6 +230,7 @@ function rulesHTML() {
     <li>手番の終わりに盤のタイルを全部はがして捨て山へ．袋が空になったら捨て山を袋に戻します</li>
     <li>特別なマス：捨欲の領域にも<b class="cb">額</b>のマスが点々とある（量のタイルで塗り替えられる）．<b>福袋</b>は共有の福袋からくじで1枚もらう．<b>おまかせ処分</b>（？のマス）は袋と捨て山からくじで1枚排除</li>
     <li>タイルの四隅：左上＝コスト，右上＝取得の条件（衝n＝衝動n以上の列），左下＝捨てる重さ，右下＝排除の条件（理n＝理性n以上の列）</li>
+    <li><b>決心チップ</b>（◆）：1枚も排除できなかった手番の終わりに1枚もらう（3枚まで）．量のマスで排除するとき，1枚で「重さ1の肩代わり」か「理性の条件1段階の免除」に使える．足りない分だけ自動で使う</li>
     <li>高いものは<b>衝動の列でないと取得できない</b>，思い入れのあるものは<b>理性の列でないと排除できない</b>（タイルの説明に書いてあります）</li>
     <li>★お気に入りは取得したら自分の前に置き，効果がずっと続きます（袋に入らない．各1枚）</li>
     <li>タイルが0枚になったら達成．そのラウンドの最後まで遊び，排除した枚数が多い人の勝ち（同じならお気に入りのコストの合計）</li>
@@ -442,7 +444,7 @@ function render() {
   ${st.log.length > 1 ? `<div class="lastlog">直前：${esc(st.log[st.log.length - 1])}</div>` : ''}
   <div class="seatsbar">${st.players.map((q, i) => `<div class="seat ${i === st.current && st.phase === 'play' ? 'now' : ''} ${i === me ? 'you' : ''}">
       <span class="dot p${i}"></span><b>${esc(q.name)}</b>${i === me ? '<em>あなた</em>' : ''}${q.finished ? ' ✓' : ''}${st.winners.includes(i) ? ' 🏆' : ''}
-      <small>持ち物${ownedTiles(q).length}・排除${q.removed}${q.perms.length ? `・★${q.perms.map(k => TILES[k].name).join('・')}` : ''}</small></div>`).join('')}</div>
+      <small>持ち物${ownedTiles(q).length}・排除${q.removed}${st.rules.chips ? `・決心<span class="cg">${'◆'.repeat(q.chips ?? 0) || '0'}</span>` : ''}${q.perms.length ? `・★${q.perms.map(k => TILES[k].name).join('・')}` : ''}</small></div>`).join('')}</div>
   <main class="game ${mine ? 'myturn' : ''}">
     <section class="left">
       <div class="who"><span class="dot p${st.current}"></span>${st.phase === 'over' ? '最後の盤' : mine ? 'あなたの盤' : `${esc(p.name)}の盤`}　<span class="bagline">袋 <b>${p.bag.length}</b>　捨て山 <b>${p.discard.length}</b>　置いた <b>${p.placed.length}</b></span></div>
@@ -516,12 +518,15 @@ function controlsHTML(): string {
         const load = big ? 0 : removeLoad(flowSel, st.rules);
         const dn = discardLimit(p, here.amount, isDeep(p.pos.y, st.board));
         const discSel = p.discard.filter(c => sel.remove.has(c.id));
-        const pick = (c: Tile) => canDropAt(c.kind, p.pos.x, st.rules) && sel.roomba !== c.id
+        const have = st.rules.chips ? p.chips ?? 0 : 0;
+        const need = chipNeed(flowSel, discSel, p.pos.x, here.amount, st.rules, big);
+        const chipLine = st.rules.chips ? `<p class="chipline">決心チップ <b>${'◆'.repeat(have) || 'なし'}</b>${have ? `　1枚で「重さ1の肩代わり」か「理性の条件1段階の免除」．<span class="meter ${need > have ? 'over' : ''}">使用 ${need} / ${have}</span>` : '（1枚も排除できなかった手番の終わりに1枚もらえます）'}</p>` : '';
+        const pick = (c: Tile) => (canDropAt(c.kind, p.pos.x, st.rules) || have > 0) && sel.roomba !== c.id
           ? tileHTML(c.kind, { attr: `data-rm="${c.id}"`, cls: sel.remove.has(c.id) ? 'on' : '' }) : tileHTML(c.kind, { cls: 'no' });
         return `<p><b class="cr">量 ${here.amount}</b>：この手番に置いたタイルから排除するものを選んでください　<span class="meter ${load > here.amount ? 'over' : ''}">${big ? '★大掃除の日：何枚でも' : `重さ ${load} / ${here.amount}`}</span></p>
-          <div class="chips pickable">${p.placed.map(pick).join('')}</div>
+          ${chipLine}<div class="chips pickable">${p.placed.map(pick).join('')}</div>
           ${dn ? `<p>捨て山からも${dn}枚まで（重さなし）　<span class="meter ${discSel.length > dn ? 'over' : ''}">${discSel.length} / ${dn}</span></p><div class="chips pickable">${p.discard.map(pick).join('') || '<span class="muted">捨て山は空です</span>'}</div>` : ''}${rb}
-          <button id="resolve" class="primary big" ${load > here.amount || discSel.length > dn ? 'disabled' : ''}>${sel.remove.size ? `${sel.remove.size}枚排除して手番を終える` : '何も捨てずに手番を終える'}</button>`;
+          <button id="resolve" class="primary big" ${need > have || discSel.length > dn ? 'disabled' : ''}>${sel.remove.size ? `${sel.remove.size}枚排除${need ? `（決心チップ${need}枚）` : ''}して手番を終える` : '何も捨てずに手番を終える'}</button>`;
       }
       if (here.kind === 'gacha') {
         return `<p><b class="cg">福袋</b>：みんなで共有の福袋から，くじで1枚もらいます（捨て山へ）．残り ${st.gacha.length} 枚</p>

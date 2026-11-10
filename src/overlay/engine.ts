@@ -51,8 +51,10 @@ export interface Rules {
   junk: 'right' | 'four';
   /** 特別なマス：捨欲の領域に点々とある額のマス，福袋，おまかせ処分 */
   special: boolean;
+  /** 決心チップ：1枚も排除できなかった手番の終わりに1枚もらう．1枚で重さ1の肩代わりか，条件1段階の免除 */
+  chips: boolean;
 }
-export const DEFAULT_RULES: Rules = { hes: 'first', hesCount: 2, traces: false, board: 'gentle', cols: 'v06', needs: true, lastCard: true, refill: true, midBuy: true, weights: 'heavy', junk: 'right', special: true };
+export const DEFAULT_RULES: Rules = { hes: 'first', hesCount: 2, traces: false, board: 'gentle', cols: 'v06', needs: true, lastCard: true, refill: true, midBuy: true, weights: 'heavy', junk: 'right', special: true, chips: true };
 
 /** 外から来たルールを整える（不正な値は既定に） */
 export function normRules(r: Partial<Rules> | undefined | null): Rules {
@@ -71,6 +73,7 @@ export function normRules(r: Partial<Rules> | undefined | null): Rules {
     weights: x.weights === 'light' || x.weights === 'heavy' ? x.weights : d.weights,
     junk: x.junk === 'four' || x.junk === 'right' ? x.junk : d.junk,
     special: bool(x.special, d.special),
+    chips: bool(x.chips, d.chips),
   };
 }
 
@@ -186,6 +189,8 @@ export interface OPlayer {
   removed: number;
   bought: number;
   finished: boolean;
+  /** 決心チップ */
+  chips: number;
 }
 
 export interface OState {
@@ -227,7 +232,7 @@ export function newOverlayGame(
     const bag: Tile[] = [];
     for (const [k, n] of startingBag(rules.hesCount)) for (let i = 0; i < n; i++) bag.push({ id: s.nextId++, kind: k });
     shuffle(bag, s);
-    s.players.push({ name: p.name, isBot: !!p.isBot, botType: p.botType, bag, discard: [], placed: [], pos: { x: 0, y: 0 }, hes: 0, perms: [], traces: [], removed: 0, bought: 0, finished: false });
+    s.players.push({ name: p.name, isBot: !!p.isBot, botType: p.botType, bag, discard: [], placed: [], pos: { x: 0, y: 0 }, hes: 0, perms: [], traces: [], removed: 0, bought: 0, finished: false, chips: 0 });
   }
   s.log.push('ゲーム開始');
   return s;
@@ -253,6 +258,18 @@ export function removeLoad(tiles: Tile[], rules: Rules): number {
   const others = tiles.filter(c => !TILES[c.kind].drag).map(c => weightOf(c.kind, rules)).sort((a, b) => b - a);
   return drags + others.slice(drags).reduce((n, w) => n + w, 0);
 }
+/** 決心チップの上限 */
+export const MAX_CHIPS = 3;
+/**
+ * その排除に必要な決心チップの枚数：量を超えた重さ（置いたタイルだけ．大掃除の日なら0）＋足りない理性の段数（タイルごと）
+ */
+export function chipNeed(fromFlow: Tile[], fromDiscard: Tile[], x: number, amount: number, rules: Rules, bigday: boolean): number {
+  const over = bigday ? 0 : Math.max(0, removeLoad(fromFlow, rules) - amount);
+  const reason = Math.max(0, -x);
+  const cond = rules.needs ? [...fromFlow, ...fromDiscard].reduce((n, c) => n + Math.max(0, (TILES[c.kind].dropNeed ?? 0) - reason), 0) : 0;
+  return over + cond;
+}
+
 /** 捨て山から排除できる枚数（一番下の行で1枚．大容量ゴミ袋なら量の枚数を足す） */
 export const discardLimit = (p: OPlayer, amount: number, deep: boolean) => (deep ? 1 : 0) + (p.perms.includes('BAG') ? amount : 0);
 
@@ -297,6 +314,7 @@ export function applyOverlay(s: OState, seat: number, a: OAction): void {
 function resolve(s: OState, p: OPlayer, a: { buy: OKind[]; remove: number[]; roomba?: number }): void {
   const pos = p.pos;
   const power = hereFx(s, p);
+  const removedBefore = p.removed;
   if (power.kind !== 'buy' && a.buy.length) throw new ORuleError('額のマスでしか取得できません');
   let total = 0;
   const need: Partial<Record<OKind, number>> = {};
@@ -317,13 +335,17 @@ function resolve(s: OState, p: OPlayer, a: { buy: OKind[]; remove: number[]; roo
   if (fromFlow.length + fromDiscard.length !== ids.length) throw new ORuleError('この手番に置いたタイルしか排除できません');
   const deep = isDeep(pos.y, s.board);
   if (fromDiscard.length > (power.kind === 'remove' ? discardLimit(p, power.amount, deep) : 0)) throw new ORuleError('捨て山から排除できる枚数を超えています');
+  let spend = 0;
   const last = s.rules.lastCard && isLastCard(p) && fromFlow.length === 1 && !fromDiscard.length;
   if (!last) {
     if (power.kind !== 'remove' && ids.length) throw new ORuleError('量のマスでしか排除できません');
-    const hard = [...fromFlow, ...fromDiscard].find(c => !canDropAt(c.kind, pos.x, s.rules));
-    if (hard) throw new ORuleError(`${TILES[hard.kind].name}は理性${TILES[hard.kind].dropNeed}以上の列でないと排除できません`);
-    const load = p.perms.includes('BIGDAY') ? 0 : removeLoad(fromFlow, s.rules);
-    if (power.kind === 'remove' && load > power.amount) throw new ORuleError(`量${power.amount}を超えています`);
+    const have = s.rules.chips ? p.chips ?? 0 : 0;
+    spend = chipNeed(fromFlow, fromDiscard, pos.x, power.amount, s.rules, p.perms.includes('BIGDAY'));
+    if (spend > have) {
+      const hard = [...fromFlow, ...fromDiscard].find(c => !canDropAt(c.kind, pos.x, s.rules));
+      if (hard && !have) throw new ORuleError(`${TILES[hard.kind].name}は理性${TILES[hard.kind].dropNeed}以上の列でないと排除できません`);
+      throw new ORuleError(have ? `決心チップが足りません（必要 ${spend}・所持 ${have}）` : `量${power.amount}を超えています`);
+    }
   }
   if (a.roomba !== undefined && a.roomba !== null) {
     if (!p.perms.includes('ROOMBA')) throw new ORuleError('ルンバを持っていません');
@@ -340,6 +362,7 @@ function resolve(s: OState, p: OPlayer, a: { buy: OKind[]; remove: number[]; roo
   p.placed = p.placed.filter(c => !gone.has(c.id));
   p.discard = p.discard.filter(c => !gone.has(c.id));
   p.removed += gone.size;
+  if (spend) p.chips -= spend;
   if (s.rules.traces && ids.length && !noTraceZone(pos) && !p.traces.some(t => samePos(t, pos))) p.traces.push({ ...pos });
   // 福袋：共有の福袋から無作為に1枚もらう（捨て山へ）
   let lucky = '';
@@ -366,10 +389,16 @@ function resolve(s: OState, p: OPlayer, a: { buy: OKind[]; remove: number[]; roo
   const parts = [`${p.name}：(${pos.x},${pos.y})で止まった`];
   if (power.kind === 'buy' || power.kind === 'remove') parts.push(`${power.kind === 'buy' ? '額' : '量'}${power.amount}`);
   if (lucky) parts.push(lucky);
+  if (spend) parts.push(`決心チップ${spend}枚使用`);
   if (ids.length) parts.push(`${ids.length}枚排除`);
   if (a.buy.length) parts.push(`取得 ${a.buy.map(k => TILES[k].name).join('・')}`);
   if (a.roomba != null) parts.push('ルンバで1枚排除');
   s.log.push(parts.join(' / '));
+  // 決心チップ：この手番に1枚も排除できなかったらもらう
+  if (s.rules.chips && p.removed === removedBefore && ownedTiles(p).length && (p.chips ?? 0) < MAX_CHIPS) {
+    p.chips = (p.chips ?? 0) + 1;
+    s.log[s.log.length - 1] += ' / 決心チップ+1';
+  }
   endTurn(s, p);
 }
 
