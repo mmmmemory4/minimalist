@@ -381,15 +381,17 @@ function hereHTML(p: OPlayer): string {
     <span class="hv">${fxWord(fx)}</span><span class="hs">${colLabel(p.pos.x)}・${rowLabel(p.pos.y)}／${src}</span></div>`;
 }
 
-function marketHTML(buying: boolean, x = 0): string {
+/** left：取得フェイズで残っている額（これより高いタイルは暗くする） */
+function marketHTML(buying: boolean, x = 0, left = Infinity): string {
   const st = s!;
   return Object.entries(st.market).map(([k, n]) => {
     const kind = k as OKind;
     const chosen = sel.buy.filter(y => y === kind).length;
-    const left = (n ?? 0) - chosen;
-    const ok = canBuyAt(kind, x, st.rules) && !(TILES[kind].perm && (cur().perms.includes(kind) || chosen > 0));
-    const ctl = buying ? `<span class="pm"><button data-sub="${kind}" ${chosen ? '' : 'disabled'}>−</button><b>${chosen}</b><button data-add="${kind}" ${left <= 0 || !ok ? 'disabled' : ''}>＋</button></span>` : '';
-    return `<div class="mk ${chosen ? 'on' : ''} ${(n ?? 0) <= 0 ? 'out' : ''} ${buying && !ok ? 'no' : ''}">${infoHTML(kind, `<div class="stock">${n! >= 99 ? '∞' : `残り${n}`}${ctl}</div>`)}</div>`;
+    const stock = (n ?? 0) - chosen;
+    // 取得できない：列の条件に合わない／お気に入りを持っている／残りの額で足りない
+    const ok = canBuyAt(kind, x, st.rules) && !(TILES[kind].perm && (cur().perms.includes(kind) || chosen > 0)) && (TILES[kind].cost ?? 0) <= left;
+    const ctl = buying ? `<span class="pm"><button data-sub="${kind}" ${chosen ? '' : 'disabled'}>−</button><b>${chosen}</b><button data-add="${kind}" ${stock <= 0 || !ok ? 'disabled' : ''}>＋</button></span>` : '';
+    return `<div class="mk ${chosen ? 'on' : ''} ${(n ?? 0) <= 0 ? 'out' : ''} ${buying && !ok && !chosen ? 'no' : ''}">${infoHTML(kind, `<div class="stock">${n! >= 99 ? '∞' : `残り${n}`}${ctl}</div>`)}</div>`;
   }).join('');
 }
 
@@ -483,7 +485,7 @@ function controlsHTML(): string {
       if (here.kind === 'buy') {
         const total = sel.buy.reduce((n, k) => n + (TILES[k].cost ?? 0), 0);
         return `<p><b class="cb">額 ${here.amount}</b>：取得するタイルを選んでください　<span class="meter ${total > here.amount ? 'over' : ''}">使用 ${total} / ${here.amount}</span></p>
-          <div class="market buying">${marketHTML(true, p.pos.x)}</div>${rb}
+          <div class="market buying">${marketHTML(true, p.pos.x, here.amount - total)}</div>${rb}
           <button id="resolve" class="primary big" ${total > here.amount ? 'disabled' : ''}>${sel.buy.length ? '取得して手番を終える' : '何も取らずに手番を終える'}</button>`;
       }
       if (here.kind === 'remove') {
