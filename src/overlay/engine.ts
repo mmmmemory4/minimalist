@@ -4,7 +4,7 @@
 //   止まったマスの「一番上に見えている効果」（タイルがあればタイル，なければ盤の印刷）で取得か排除をする
 //   コマは無い．「今いるマス」は最後に置いたタイルの矢印の先（画面ではそのマスを光らせる）
 
-import { DELTA, DIRS, Dir, Fx, GACHA_FX, GACHA_POOL, HES_FX, LIGHT_MAX, LIGHT_PER, MARKET, NO_FX, OKind, PURGE_FX, TILES, UNLIMITED_KINDS, isPerm, startingBag, tileDirs, weightOf } from './tiles';
+import { DELTA, DIRS, Dir, Fx, GACHA_FX, GACHA_POOL, HES_FX, LIGHT_MAX, LIGHT_PER, MARKET, NO_FX, OKind, LUCKY_FX, TILES, UNLIMITED_KINDS, isPerm, startingBag, tileDirs, weightOf } from './tiles';
 import { nextRandom } from '../engine/rng';
 import { shuffle } from '../engine/rng';
 
@@ -49,7 +49,7 @@ export interface Rules {
   weights: 'heavy' | 'light';
   /** ガラクタの矢印：right = →だけ／four = 4方向 */
   junk: 'right' | 'four';
-  /** 特別なマス：捨欲の領域に点々とある額のマス，福袋，おまかせ処分 */
+  /** 特別なマス：捨欲の領域に点々とある額のマス，福袋，運試し */
   special: boolean;
   /** 決心チップ：1枚も排除できなかった手番の終わりに1枚もらう．1枚で重さ1の肩代わりか，条件1段階の免除 */
   chips: boolean;
@@ -93,12 +93,12 @@ export function colMod(x: number, kind: 'buy' | 'remove', cols: Rules['cols']): 
   return cols === 'bonus' ? Math.max(0, v) : v;
 }
 
-/** 特別なマス（基本・ゆるやかの盤）：捨欲の領域の額のマス，福袋，おまかせ処分．数字はそのまま（列の増減なし） */
+/** 特別なマス（基本・ゆるやかの盤）：捨欲の領域の額のマス，福袋，運試し．数字はそのまま（列の増減なし） */
 export const SPECIAL_CELLS: { x: number; y: number; fx: Fx }[] = [
   { x: 0, y: -2, fx: { kind: 'buy', amount: 2 } }, { x: -2, y: -1, fx: { kind: 'buy', amount: 2 } },
   { x: -1, y: -3, fx: { kind: 'buy', amount: 2 } }, { x: 1, y: -4, fx: { kind: 'buy', amount: 3 } },
   { x: -1, y: 1, fx: GACHA_FX }, { x: 2, y: 0, fx: GACHA_FX }, { x: -2, y: 3, fx: GACHA_FX },
-  { x: 2, y: -1, fx: PURGE_FX }, { x: -2, y: -2, fx: PURGE_FX },
+  { x: 1, y: -1, fx: LUCKY_FX }, { x: -2, y: -2, fx: LUCKY_FX },
 ];
 export const specialAt = (pos: Pos, b: OBoard, rules: Rules): Fx | undefined =>
   (rules.special && b.buy.length === 3 && b.remove.length === 4 ? SPECIAL_CELLS.find(c => c.x === pos.x && c.y === pos.y)?.fx : undefined);
@@ -191,6 +191,11 @@ export interface OPlayer {
   finished: boolean;
   /** 決心チップ */
   chips: number;
+  /** 運試しの結果（当たりチップが出るまでに袋から表にした枚数＝量）．運試しのマスで止まったときに決まる */
+  roll?: number | null;
+  /** 運試しで表にしたタイル（見せるだけ．排除の対象にはならず，捨て山へ送る） */
+  rollKinds?: OKind[];
+  rollIds?: number[];
 }
 
 export interface OState {
@@ -246,8 +251,27 @@ export const isDone = (p: OPlayer) => ownedTiles(p).length === 0;
 export const favCost = (p: OPlayer) => p.perms.reduce((n, k) => n + (TILES[k].cost ?? 0), 0);
 /** まだ引けるか */
 export const canDraw = (p: OPlayer, rules: Rules) => p.bag.length > 0 || (rules.refill && p.discard.length > 0);
-/** 今止めたときの効果 */
-export const hereFx = (s: OState, p: OPlayer): Fx => effectAt(envOf(s, p), p.placed, p.pos);
+/** 今止めたときの効果．運試しは，止まって引いたあとは量のマスとして扱う */
+export function hereFx(s: OState, p: OPlayer): Fx {
+  const fx = effectAt(envOf(s, p), p.placed, p.pos);
+  return fx.kind === 'lucky' && p.roll != null ? { kind: 'remove', amount: p.roll } : fx;
+}
+/**
+ * 止まった：運試しのマスなら，自分の袋（まだ引いていないタイル）に当たりチップを混ぜ，当たりが出るまで表にする．
+ * 表にした枚数が量になる（袋が多い人ほど大きくなりやすい）．表にしたタイルは排除の対象にならず，捨て山へ送る
+ */
+function stopHere(s: OState, p: OPlayer): void {
+  s.turn = 'resolve';
+  if (hereFx(s, p).kind !== 'lucky') return;
+  const n = p.bag.length;
+  const k = Math.floor(nextRandom(s) * (n + 1)); // 当たりチップの位置は n+1 通りが同じ確率
+  p.roll = k;
+  const shown = p.bag.splice(n - k).reverse(); // 袋の上から k 枚
+  p.rollKinds = shown.map(t => t.kind);
+  p.rollIds = shown.map(t => t.id);
+  p.discard.push(...shown); // 表にしたタイルは捨て山へ
+  s.log.push(`${p.name}：運試し → 袋から${k}枚表にして当たり（量${k}）`);
+}
 
 export const canBuyAt = (k: OKind, x: number, rules: Rules) => !rules.needs || (TILES[k].buyNeed ?? 0) <= Math.max(0, x);
 export const canDropAt = (k: OKind, x: number, rules: Rules) => !rules.needs || (TILES[k].dropNeed ?? 0) <= Math.max(0, -x);
@@ -287,20 +311,21 @@ export function applyOverlay(s: OState, seat: number, a: OAction): void {
       putTile(p, tile);
       const dirs = dirsOf(tile.kind, env);
       if (dirs.length > 1) { s.turn = 'branch'; return; }
-      if (leaveTile(env, p, tile.kind, dirs[0] ?? null)) s.turn = 'resolve';
+      if (leaveTile(env, p, tile.kind, dirs[0] ?? null)) stopHere(s, p);
       return;
     }
     case 'branch': {
       if (s.turn !== 'branch') throw new ORuleError('向きを選ぶ場面ではありません');
       const tile = p.placed[p.placed.length - 1];
       if (!dirsOf(tile.kind, env).includes(a.dir)) throw new ORuleError('その向きには出られません');
-      s.turn = leaveTile(env, p, tile.kind, a.dir) ? 'resolve' : 'move';
+      s.turn = 'move';
+      if (leaveTile(env, p, tile.kind, a.dir)) stopHere(s, p);
       return;
     }
     case 'stop': {
       if (s.turn !== 'move') throw new ORuleError('今は止められません');
       if (!p.placed.length && canDraw(p, s.rules)) throw new ORuleError('少なくとも1枚引いてください');
-      s.turn = 'resolve';
+      stopHere(s, p);
       return;
     }
     case 'resolve': {
@@ -333,6 +358,7 @@ function resolve(s: OState, p: OPlayer, a: { buy: OKind[]; remove: number[]; roo
   const fromFlow = ids.map(id => p.placed.find(c => c.id === id)).filter(Boolean) as Tile[];
   const fromDiscard = ids.map(id => p.discard.find(c => c.id === id)).filter(Boolean) as Tile[];
   if (fromFlow.length + fromDiscard.length !== ids.length) throw new ORuleError('この手番に置いたタイルしか排除できません');
+  if (fromDiscard.some(c => p.rollIds?.includes(c.id))) throw new ORuleError('運試しで表にしたタイルは排除できません');
   const deep = isDeep(pos.y, s.board);
   if (fromDiscard.length > (power.kind === 'remove' ? discardLimit(p, power.amount, deep) : 0)) throw new ORuleError('捨て山から排除できる枚数を超えています');
   let spend = 0;
@@ -374,17 +400,6 @@ function resolve(s: OState, p: OPlayer, a: { buy: OKind[]; remove: number[]; roo
       lucky = `福袋から「${TILES[k].name}」`;
     } else lucky = '福袋は空だった';
   }
-  // おまかせ処分：袋と捨て山から無作為に1枚排除（重さ・条件なし）
-  if (power.kind === 'purge') {
-    const pool = [...p.bag, ...p.discard];
-    if (pool.length) {
-      const t = pool[Math.floor(nextRandom(s) * pool.length)];
-      p.bag = p.bag.filter(c => c !== t);
-      p.discard = p.discard.filter(c => c !== t);
-      p.removed++;
-      lucky = `おまかせ処分で「${TILES[t.kind].name}」を排除`;
-    } else lucky = 'おまかせ処分：袋も捨て山も空だった';
-  }
 
   const parts = [`${p.name}：(${pos.x},${pos.y})で止まった`];
   if (power.kind === 'buy' || power.kind === 'remove') parts.push(`${power.kind === 'buy' ? '額' : '量'}${power.amount}`);
@@ -408,6 +423,9 @@ function endTurn(s: OState, p: OPlayer): void {
   p.placed = [];
   p.pos = { x: 0, y: 0 };
   p.hes = 0;
+  p.roll = null;
+  p.rollKinds = [];
+  p.rollIds = [];
   if (isDone(p) && !p.finished) {
     p.finished = true;
     s.log.push(`★ ${p.name}が片付けを終えた！`);

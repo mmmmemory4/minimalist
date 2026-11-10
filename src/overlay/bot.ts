@@ -3,7 +3,7 @@
 
 import { Dir, OKind, TILES, isPerm, weightOf } from './tiles';
 import {
-  Env, OAction, OPlayer, OState, Tile, Walk, applyOverlay, canBuyAt, canDraw, canDropAt, chipNeed, dirsOf, discardLimit, effectAt, envOf,
+  Env, OAction, OPlayer, OState, Tile, Walk, applyOverlay, canBuyAt, canDraw, canDropAt, chipNeed, dirsOf, discardLimit, effectAt, envOf, hereFx,
   isDeep, isLastCard, leaveTile, ownedTiles, putTile,
 } from './engine';
 
@@ -81,7 +81,7 @@ export function planRemove(c: Ctx, flow: Tile[], amount: number, deep: boolean, 
   if (keepCore && picked.length === chosen.length && picked.every(t => trashScore(c, t) < 5)) picked = owned.some(t => TILES[t.kind].cost === null) ? [] : picked.slice(0, 1);
   const remove = picked.map(t => t.id);
   let value = picked.reduce((n, t) => n + 2 + Math.max(0, trashScore(c, t)) * 0.2, 0);
-  const ds = c.p.discard.filter(t => canDropAt(t.kind, xcol, rules)).sort((a, b) => trashScore(c, b) - trashScore(c, a)).slice(0, dn);
+  const ds = c.p.discard.filter(t => canDropAt(t.kind, xcol, rules) && !c.p.rollIds?.includes(t.id)).sort((a, b) => trashScore(c, b) - trashScore(c, a)).slice(0, dn);
   for (const d of ds) { remove.push(d.id); value += 2; }
   if (remove.length >= owned.length) value += 30;
   return { remove, value };
@@ -101,9 +101,12 @@ function stopValue(c: Ctx, w: Walk): number {
   const rb = c.p.perms.includes('ROOMBA') && w.placed.length ? 2 : 0;
   if (pw.kind === 'buy') return planBuy(c, pw.amount, w.pos.x).value + rb;
   if (pw.kind === 'remove') return planRemove(c, w.placed, pw.amount, isDeep(w.pos.y, c.s.board), w.pos.x).value + (w.placed.length > 1 ? rb : 0);
-  // 福袋：何が出るかわからないが1枚もらえる．おまかせ処分：1枚減る（残りが少ないほどうれしい）
+  // 福袋：何が出るかわからないが1枚もらえる．運試し：量は 0〜袋の残り枚数（平均はその半分）
   if (pw.kind === 'gacha') return (c.s.gacha.length ? 2.2 : 0) + rb;
-  if (pw.kind === 'purge') return (c.p.bag.length + c.p.discard.length ? 2.6 : 0) + rb;
+  if (pw.kind === 'lucky') {
+    const left = Math.max(0, c.p.bag.length - (w.placed.length - c.p.placed.length));
+    return planRemove(c, w.placed, Math.floor(left / 2), false, w.pos.x).value * 0.9 + (w.placed.length > 1 ? rb : 0);
+  }
   return rb;
 }
 
@@ -151,7 +154,7 @@ export function chooseOverlayAction(s: OState, g: OGenome): OAction {
     }
     case 'resolve': {
       if (s.rules.lastCard && isLastCard(p)) return { type: 'resolve', buy: [], remove: [p.placed[0].id] };
-      const pw = effectAt(c.env, p.placed, p.pos);
+      const pw = hereFx(s, p);
       const remove = pw.kind === 'remove' ? planRemove(c, p.placed, pw.amount, isDeep(p.pos.y, s.board), p.pos.x).remove : [];
       const buy = pw.kind === 'buy' ? planBuy(c, pw.amount, p.pos.x).buy : [];
       return { type: 'resolve', buy, remove, roomba: planRoomba(c, p.placed, remove) };

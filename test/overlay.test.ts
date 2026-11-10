@@ -153,7 +153,7 @@ describe('オーバーレイ版', () => {
     expect(printedFx({ x: 0, y: -2 }, OBOARDS.gentle, { ...DEFAULT_RULES, special: false }).kind).toBe('remove');
   });
 
-  it('福袋：共有の福袋から1枚もらう．おまかせ処分：袋と捨て山から1枚排除', () => {
+  it('福袋：共有の福袋から1枚もらう．運試し：袋から当たりが出るまでに表にした枚数が量になる', () => {
     const s = game();
     stack(s, 'DOUBT', 'WANT'); // (-1,1) は福袋
     draw(s); draw(s);
@@ -165,17 +165,25 @@ describe('オーバーレイ版', () => {
     expect(p.discard.length).toBe(3);
     const t = game();
     const q = t.players[0];
-    stack(t, 'RUSH', 'RUSH', 'DOWN', 'WANT', 'WANT'); // (2,-1) はおまかせ処分
-    draw(t); draw(t); draw(t);
-    expect(here(t).kind).toBe('purge');
+    stack(t, 'RUSH', 'DOWN', 'WANT', 'WANT'); // (1,-1) は運試し
+    draw(t); draw(t);
+    expect(here(t).kind).toBe('lucky');
     applyOverlay(t, 0, { type: 'stop' });
-    applyOverlay(t, 0, { type: 'resolve', buy: [], remove: [] });
+    // 袋の残りは2枚．当たりチップを混ぜて，当たりが出るまでに表にした枚数（0〜2）が量
+    expect(q.roll).toBeGreaterThanOrEqual(0);
+    expect(q.roll).toBeLessThanOrEqual(2);
+    expect(q.rollKinds!.length).toBe(q.roll);
+    expect(q.bag.length).toBe(2 - q.roll!); // 表にしたタイルは捨て山へ
+    expect(q.discard.length).toBe(q.roll);
+    q.roll = 1;
+    expect(here(t)).toEqual({ kind: 'remove', amount: q.roll });
+    applyOverlay(t, 0, { type: 'resolve', buy: [], remove: [q.placed.find(c => c.kind === 'DOWN')!.id] });
     expect(q.removed).toBe(1);
-    expect(ownedTiles(q).length).toBe(4);
+    expect(q.roll).toBeNull();
   });
 
   it('決心チップ：排除できなかった手番にもらい，重さや条件の不足を埋められる', () => {
-    const s = game();
+    const s = game({ special: false });
     const p = s.players[0];
     stack(s, 'WANT', 'DOUBT');
     draw(s); applyOverlay(s, 0, { type: 'stop' });

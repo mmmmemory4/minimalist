@@ -149,7 +149,7 @@ const RULE_OPTS: { key: keyof Rules; label: string; choices: [string, string][] 
   { key: 'weights', label: '捨てる重さ', choices: [['heavy', '重い（欲しい2・↑へ行くタイル2・ガラクタ2）'], ['light', '軽い（ガラクタ2，ほかは1）']] },
   { key: 'chips', label: '決心チップ', choices: [['true', 'あり（排除できなかった手番に1枚．重さ1か条件1段階に使える）'], ['false', 'なし']] },
   { key: 'junk', label: 'ガラクタの矢印', choices: [['right', '→だけ'], ['four', '4方向']] },
-  { key: 'special', label: '特別なマス', choices: [['true', 'あり（捨欲の中の額マス・福袋・おまかせ処分）'], ['false', 'なし']] },
+  { key: 'special', label: '特別なマス', choices: [['true', 'あり（捨欲の中の額マス・福袋・運試し）'], ['false', 'なし']] },
   { key: 'traces', label: '片付けた跡の壁', choices: [['false', 'なし'], ['true', 'あり（排除したマスに入れなくなる）']] },
   { key: 'board', label: '盤', choices: Object.values(OBOARDS).map(b => [b.name, b.label] as [string, string]) },
   { key: 'cols', label: '列の増減（盤の印刷）', choices: [['v06', '衝動は額＋・量−，理性は量＋・額−'], ['bonus', '上乗せだけ（衝動は額＋，理性は量＋）'], ['none', 'なし']] },
@@ -228,7 +228,7 @@ function rulesHTML() {
     <li>盤の端へは出られず，置いたタイルの上に残ります．矢印が複数あるタイルは向きを選びます．矢印のないタイルは置いたタイルの上で止まります</li>
     <li>引くほど通ったマスが塗り替わります．良いマスに立っているうちに止めるか，もう1枚引くか</li>
     <li>手番の終わりに盤のタイルを全部はがして捨て山へ．袋が空になったら捨て山を袋に戻します</li>
-    <li>特別なマス：捨欲の領域にも<b class="cb">額</b>のマスが点々とある（量のタイルで塗り替えられる）．<b>福袋</b>は共有の福袋からくじで1枚もらう．<b>おまかせ処分</b>（？のマス）は袋と捨て山からくじで1枚排除</li>
+    <li>特別なマス：捨欲の領域にも<b class="cb">額</b>のマスが点々とある（量のタイルで塗り替えられる）．<b>福袋</b>は共有の福袋からくじで1枚もらう．<b>運試し</b>は，自分の袋（まだ引いていないタイル）に当たりチップを混ぜ，当たりが出るまでタイルを表にする．表にした枚数がそのまま量になる（そのあとは量のマスと同じ）．表にしたタイルは排除の対象にならず，捨て山へ送る</li>
     <li>タイルの四隅：左上＝コスト，右上＝取得の条件（衝n＝衝動n以上の列），左下＝捨てる重さ，右下＝排除の条件（理n＝理性n以上の列）</li>
     <li><b>決心チップ</b>（◆）：1枚も排除できなかった手番の終わりに1枚もらう（3枚まで）．量のマスで排除するとき，1枚で「重さ1の肩代わり」か「理性の条件1段階の免除」に使える．足りない分だけ自動で使う</li>
     <li>高いものは<b>衝動の列でないと取得できない</b>，思い入れのあるものは<b>理性の列でないと排除できない</b>（タイルの説明に書いてあります）</li>
@@ -354,7 +354,7 @@ function setup() {
 const cur = () => s!.players[s!.current];
 const colLabel = (x: number) => (x < 0 ? `理性${-x}` : x > 0 ? `衝動${x}` : '中');
 const rowLabel = (y: number) => (y > 0 ? `物欲${y}` : y < 0 ? `捨欲${-y}` : '中央');
-const fxWord = (fx: Fx) => (fx.kind === 'buy' ? `額${fx.amount}で取得` : fx.kind === 'remove' ? `量${fx.amount}で排除` : fx.kind === 'gacha' ? '福袋を引く' : fx.kind === 'purge' ? 'おまかせ処分' : '効果なし');
+const fxWord = (fx: Fx) => (fx.kind === 'buy' ? `額${fx.amount}で取得` : fx.kind === 'remove' ? `量${fx.amount}で排除` : fx.kind === 'gacha' ? '福袋を引く' : fx.kind === 'lucky' ? '運試し（袋から表にした枚数が量）' : '効果なし');
 
 let lastTopId = 0;
 
@@ -384,7 +384,7 @@ function boardHTML(p: OPlayer, mine: boolean): string {
       const cls = ['cell', pf.kind, here ? 'here' : '', pick ? 'pick' : '', x === 0 && y === 0 ? 'start' : ''].join(' ');
       const printed = x === 0 && y === 0 ? '<span class="pf st">START</span>'
         : pf.kind === 'none' ? '' : pf.kind === 'gacha' ? '<span class="pf sp" title="福袋：共有の福袋から1枚もらう">福<small>福袋</small></span>'
-        : pf.kind === 'purge' ? '<span class="pf sp" title="おまかせ処分：袋と捨て山からくじで1枚排除">？<small>おまかせ</small></span>'
+        : pf.kind === 'lucky' ? '<span class="pf sp" title="運試し：自分の袋に当たりチップを混ぜ，当たりが出るまでに表にした枚数が量になる">運<small>運試し</small></span>'
         : `<span class="pf"><small>${pf.kind === 'buy' ? '額' : '量'}</small>${pf.amount}</span>`;
       const tile = top ? tileHTML(top.kind, { fx: tileFx(top.kind, envOf(st, p)), seq: p.placed.indexOf(top) + 1, stack: stack.length, cls: `${stack.length > 1 ? 'stacked' : ''} ${isNew && top === newest ? 'new' : ''}` }) : '';
       h += `<div class="${cls}" style="--a:${Math.min(1, 0.16 + pf.amount * 0.12)}" ${pick ? `data-dir="${pick.dir}"` : ''}>${printed}${wall ? '<span class="wall" title="片付けた跡（入れない）">跡</span>' : ''}${tile}
@@ -523,19 +523,15 @@ function controlsHTML(): string {
         const chipLine = st.rules.chips ? `<p class="chipline">決心チップ <b>${'◆'.repeat(have) || 'なし'}</b>${have ? `　1枚で「重さ1の肩代わり」か「理性の条件1段階の免除」．<span class="meter ${need > have ? 'over' : ''}">使用 ${need} / ${have}</span>` : '（1枚も排除できなかった手番の終わりに1枚もらえます）'}</p>` : '';
         const pick = (c: Tile) => (canDropAt(c.kind, p.pos.x, st.rules) || have > 0) && sel.roomba !== c.id
           ? tileHTML(c.kind, { attr: `data-rm="${c.id}"`, cls: sel.remove.has(c.id) ? 'on' : '' }) : tileHTML(c.kind, { cls: 'no' });
-        return `<p><b class="cr">量 ${here.amount}</b>：この手番に置いたタイルから排除するものを選んでください　<span class="meter ${load > here.amount ? 'over' : ''}">${big ? '★大掃除の日：何枚でも' : `重さ ${load} / ${here.amount}`}</span></p>
+        return `${p.roll != null ? `<p><b class="cg">運試し</b>：袋に当たりチップを混ぜて，当たりが出るまでに <b>${p.roll}</b> 枚を表にした → <b class="cr">量 ${p.roll}</b></p><div class="chips rolled">${(p.rollKinds ?? []).map(k => tileHTML(k, { cls: 'chip' })).join('')}<span class="hit">当たり</span></div><p class="muted">表にしたタイルは排除の対象になりません（捨て山へ送りました）</p>` : ''}<p><b class="cr">量 ${here.amount}</b>：この手番に置いたタイルから排除するものを選んでください　<span class="meter ${load > here.amount ? 'over' : ''}">${big ? '★大掃除の日：何枚でも' : `重さ ${load} / ${here.amount}`}</span></p>
           ${chipLine}<div class="chips pickable">${p.placed.map(pick).join('')}</div>
-          ${dn ? `<p>捨て山からも${dn}枚まで（重さなし）　<span class="meter ${discSel.length > dn ? 'over' : ''}">${discSel.length} / ${dn}</span></p><div class="chips pickable">${p.discard.map(pick).join('') || '<span class="muted">捨て山は空です</span>'}</div>` : ''}${rb}
+          ${dn ? `<p>捨て山からも${dn}枚まで（重さなし）　<span class="meter ${discSel.length > dn ? 'over' : ''}">${discSel.length} / ${dn}</span></p><div class="chips pickable">${p.discard.filter(c => !p.rollIds?.includes(c.id)).map(pick).join('') || '<span class="muted">捨て山は空です</span>'}</div>` : ''}${rb}
           <button id="resolve" class="primary big" ${need > have || discSel.length > dn ? 'disabled' : ''}>${sel.remove.size ? `${sel.remove.size}枚排除${need ? `（決心チップ${need}枚）` : ''}して手番を終える` : '何も捨てずに手番を終える'}</button>`;
       }
       if (here.kind === 'gacha') {
         return `<p><b class="cg">福袋</b>：みんなで共有の福袋から，くじで1枚もらいます（捨て山へ）．残り ${st.gacha.length} 枚</p>
           <div class="chips">${chipsHTML(st.gacha.map(k => ({ id: 0, kind: k })))}</div>${rb}
           <button id="resolve" class="primary big" >${st.gacha.length ? '福袋を引いて手番を終える' : '手番を終える（福袋は空）'}</button>`;
-      }
-      if (here.kind === 'purge') {
-        return `<p><b class="cg">おまかせ処分</b>：あなたの袋と捨て山（合わせて ${p.bag.length + p.discard.length} 枚）から，くじで1枚排除します．重さ・条件は関係なし．何が消えるかは運しだい</p>${rb}
-          <button id="resolve" class="primary big">くじを引いて手番を終える</button>`;
       }
       return `<p>効果のないマスで止まりました</p>${rb}<button id="resolve" class="primary big">手番を終える</button>`;
     }

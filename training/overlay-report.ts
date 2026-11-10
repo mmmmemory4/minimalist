@@ -32,7 +32,7 @@ export function runReport(games: number) {
   const win: Record<string, number> = {}, app: Record<string, number> = {};
   const rounds: number[] = [], buys: Record<string, number[]> = {};
   let draws = 0, turns = 0, drawn = 0, drewAll = 0, onTile = 0, favWins = 0, wins = 0;
-  const kindAtStop = { buy: 0, remove: 0, none: 0, gacha: 0, purge: 0 };
+  const kindAtStop = { buy: 0, remove: 0, none: 0, gacha: 0, lucky: 0 };
   const rowHist = { early: new Map<number, number>(), late: new Map<number, number>() };
   const colHist = { early: new Map<number, number>(), late: new Map<number, number>() };
   const bought: Record<string, number> = {};
@@ -52,7 +52,7 @@ export function runReport(games: number) {
           turns++; drawn += p.placed.length;
           if (!p.bag.length && !p.discard.length) drewAll++;
           if (topTile(p.placed, p.pos)) onTile++;
-          kindAtStop[hereFx(s, p).kind]++;
+          kindAtStop[p.roll != null ? 'lucky' : hereFx(s, p).kind]++;
         }
         const cur = s.current, r = s.round;
         playOne(s, gs);
@@ -86,7 +86,7 @@ export function runReport(games: number) {
   console.log(`\n## オーバーレイ版 ${JSON.stringify(RULES)}（${games}試合，2〜4人）`);
   console.log(`平均ラウンド ${avg(rounds).toFixed(1)}，引分 ${pct(draws, games)}%，勝者のうちお気に入り持ち ${pct(favWins, wins)}%`);
   console.log(`1手番に引いた枚数 ${(drawn / turns).toFixed(2)}，持ち物を全部引いた手番 ${pct(drewAll, turns)}%，タイルの上で止まった ${pct(onTile, turns)}%`);
-  console.log(`止まったマスの効果 取得 ${pct(kindAtStop.buy, turns)}%・排除 ${pct(kindAtStop.remove, turns)}%・なし ${pct(kindAtStop.none, turns)}%・福袋 ${pct(kindAtStop.gacha, turns)}%・おまかせ処分 ${pct(kindAtStop.purge, turns)}%`);
+  console.log(`止まったマスの効果 取得 ${pct(kindAtStop.buy, turns)}%・排除 ${pct(kindAtStop.remove, turns)}%・なし ${pct(kindAtStop.none, turns)}%・福袋 ${pct(kindAtStop.gacha, turns)}%・運試し ${pct(kindAtStop.lucky, turns)}%`);
   console.log('| 型 | 勝率倍率 | 取得/人 |');
   console.log('|---|---|---|');
   for (const w of names) console.log(`| ${OBOT_LABELS[w] ?? w} | ${((win[w] ?? 0) / (app[w] || 1)).toFixed(2)} | ${avg(buys[w]).toFixed(1)} |`);
