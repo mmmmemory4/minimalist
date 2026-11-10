@@ -60,7 +60,7 @@ describe('オーバーレイ版', () => {
     stack(s, 'REST');
     draw(s);
     expect(s.players[0].pos).toEqual({ x: 0, y: 0 });
-    expect(here(s)).toEqual({ kind: 'remove', amount: 1 });
+    expect(here(s)).toEqual({ kind: 'remove', amount: 2 });
     const t = game();
     stack(t, 'WANT', 'WANT', 'WANT', 'WANT');
     draw(t); draw(t); draw(t); draw(t);
@@ -91,7 +91,7 @@ describe('オーバーレイ版', () => {
   });
 
   it('量のマスで，この手番に置いたタイルを排除する．手番の終わりに残りは捨て山へ', () => {
-    const s = game();
+    const s = game({ weights: 'light' });
     stack(s, 'WANT', 'DOWN', 'DOWN');
     const p = s.players[0];
     p.discard = [];
@@ -109,7 +109,7 @@ describe('オーバーレイ版', () => {
 
   it('条件：ガラクタは理性1以上の列でないと排除できない（ルールで外せる）', () => {
     for (const needs of [true, false]) {
-      const s = game({ needs });
+      const s = game({ needs, junk: 'four' });
       stack(s, 'JUNK', 'WANT'); // 袋に1枚残す（最後の1枚の例外にしない）
       draw(s); applyOverlay(s, 0, { type: 'branch', dir: 'D' });
       applyOverlay(s, 0, { type: 'stop' });
@@ -126,6 +126,52 @@ describe('オーバーレイ版', () => {
     expect(() => applyOverlay(s, 0, { type: 'resolve', buy: ['DOWN2'], remove: [] })).toThrow();
     applyOverlay(s, 0, { type: 'resolve', buy: ['DOWN', 'UP2'], remove: [] });
     expect(s.players[0].discard.map(t => t.kind).sort()).toEqual(['DOWN', 'UP2', 'WANT']);
+  });
+
+  it('重いルール：欲しいは重さ2，ガラクタは重さ3で→だけ', () => {
+    const s = game();
+    stack(s, 'WANT', 'DOWN', 'DOWN', 'JUNK');
+    draw(s); draw(s); draw(s);
+    const p = s.players[0];
+    applyOverlay(s, 0, { type: 'stop' }); // (0,-1) 量1
+    expect(() => applyOverlay(s, 0, { type: 'resolve', buy: [], remove: [p.placed[0].id] })).toThrow();
+    const t = game();
+    stack(t, 'JUNK', 'WANT');
+    draw(t);
+    expect(t.turn).toBe('move');
+    expect(t.players[0].pos).toEqual({ x: 1, y: 0 });
+  });
+
+  it('特別なマス：捨欲の領域の額マスは，量のタイルで塗り替えられる', () => {
+    const s = game();
+    stack(s, 'DOWN', 'DOWN', 'DOWN2', 'WANT');
+    draw(s); draw(s);
+    expect(s.players[0].pos).toEqual({ x: 0, y: -2 });
+    expect(here(s)).toEqual({ kind: 'buy', amount: 2 });
+    draw(s); draw(s); // 断捨離（量2）を置いて↓，欲しいで↑へ戻る
+    expect(here(s)).toEqual({ kind: 'remove', amount: 2 });
+    expect(printedFx({ x: 0, y: -2 }, OBOARDS.gentle, { ...DEFAULT_RULES, special: false }).kind).toBe('remove');
+  });
+
+  it('福袋：共有の福袋から1枚もらう．おまかせ処分：袋と捨て山から1枚排除', () => {
+    const s = game();
+    stack(s, 'DOUBT', 'WANT'); // (-1,1) は福袋
+    draw(s); draw(s);
+    expect(here(s).kind).toBe('gacha');
+    const pool = s.gacha.length, p = s.players[0];
+    applyOverlay(s, 0, { type: 'stop' });
+    applyOverlay(s, 0, { type: 'resolve', buy: [], remove: [] });
+    expect(s.gacha.length).toBe(pool - 1);
+    expect(p.discard.length).toBe(3);
+    const t = game();
+    const q = t.players[0];
+    stack(t, 'RUSH', 'RUSH', 'DOWN', 'WANT', 'WANT'); // (2,-1) はおまかせ処分
+    draw(t); draw(t); draw(t);
+    expect(here(t).kind).toBe('purge');
+    applyOverlay(t, 0, { type: 'stop' });
+    applyOverlay(t, 0, { type: 'resolve', buy: [], remove: [] });
+    expect(q.removed).toBe(1);
+    expect(ownedTiles(q).length).toBe(4);
   });
 
   it('片付けた跡の壁はルールで有効にしたときだけ', () => {

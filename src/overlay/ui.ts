@@ -2,7 +2,7 @@
 //   コマは描かない．「今止めるとどのマスの効果になるか」を盤（光るマス）とパネルに常に出す
 
 import './ui.css';
-import { ARROW, Dir, Fx, MARKET, OKind, TILES, TILE_SETS, UNLIMITED_KINDS, dirsText, fxText, marketFromChoice, startingBag } from './tiles';
+import { ARROW, Dir, Fx, MARKET, OKind, TILES, TILE_SETS, UNLIMITED_KINDS, dirsText, fxText, marketFromChoice, startingBag, tileDirs, weightOf } from './tiles';
 import { OMAX_SEATS, ORoomInfo, OServerMsg } from './protocol';
 import {
   DEFAULT_RULES, OAction, OBOARDS, OPlayer, OState, Pos, Rules, Tile, X_MAX, X_MIN, applyOverlay, canBuyAt, canDraw, canDropAt, canMove,
@@ -84,36 +84,50 @@ function leaveOnline() {
 
 // ---- タイルの見た目 ----
 
-/** タイル1枚．辺の近くに出られる向きの矢印，中央にタイルの効果 */
-function tileHTML(kind: OKind, o: { fx?: Fx; cls?: string; attr?: string; seq?: number; stack?: number; count?: number } = {}): string {
+/** 今のルール（ゲーム中はその卓のルール，開始画面では選んでいるルール） */
+const R = (): Rules => s?.rules ?? readRulesDraft();
+
+/**
+ * タイル1枚．辺の近くに出られる向きの矢印，中央にタイルの効果．
+ * 四隅：左上＝コスト（盤の上では置いた順），右上＝取得の条件（衝n），左下＝捨てる重さ，右下＝排除の条件（理n）
+ */
+function tileHTML(kind: OKind, o: { fx?: Fx; cls?: string; attr?: string; seq?: number; stack?: number; count?: number; cost?: boolean } = {}): string {
   const d = TILES[kind];
-  const fx = o.fx ?? (s ? tileFx(kind, { rules: s.rules, removed: me >= 0 ? s.players[me].removed : 0 }) : kind === 'HES' && readRulesDraft().hes === 'second' ? { kind: 'buy' as const, amount: 3 } : d.fx);
+  const rules = R();
+  const dirs = tileDirs(kind, rules);
+  const fx = o.fx ?? (s ? tileFx(kind, { rules: s.rules, removed: me >= 0 ? s.players[me].removed : 0 }) : kind === 'HES' && rules.hes === 'second' ? { kind: 'buy' as const, amount: 3 } : d.fx);
   const center = d.perm ? '<span class="fx">★</span>'
     : fx.kind === 'none' ? '<span class="fx none">–</span>'
     : `<span class="fx"><small>${fx.kind === 'buy' ? '額' : '量'}</small>${kind === 'LIGHT' && !s ? '?' : fx.amount}</span>`;
-  return `<div class="tile k-${d.perm ? 'perm' : fx.kind} ${d.dirs.length || d.perm ? '' : 'stay'} ${o.cls ?? ''}" ${o.attr ?? ''} title="${esc(tileTitle(kind))}">
-    ${d.dirs.map(x => `<i class="ar ${x}"></i>`).join('')}${center}<span class="nm">${d.name}</span>
-    ${o.seq ? `<span class="seq">${o.seq}</span>` : ''}${(o.stack ?? 0) > 1 ? `<span class="stk">${o.stack}枚</span>` : ''}${(o.count ?? 0) > 1 ? `<span class="cnt">×${o.count}</span>` : ''}</div>`;
+  const tl = o.seq ? `<span class="seq">${o.seq}</span>` : o.cost && d.cost !== null ? `<span class="c-cost" title="取得コスト">${d.cost}</span>` : '';
+  const tr = (o.stack ?? 0) > 1 ? `<span class="stk">${o.stack}枚</span>` : (o.count ?? 0) > 1 ? `<span class="cnt">×${o.count}</span>`
+    : o.cost && rules.needs && d.buyNeed ? `<span class="c-imp" title="衝動${d.buyNeed}以上の列で取得">衝${d.buyNeed}</span>` : '';
+  const bl = d.perm ? '' : `<span class="c-w" title="捨てる重さ">重${weightOf(kind, rules)}</span>`;
+  const br = rules.needs && d.dropNeed ? `<span class="c-calm" title="理性${d.dropNeed}以上の列で排除">理${d.dropNeed}</span>` : '';
+  return `<div class="tile k-${d.perm ? 'perm' : fx.kind} ${dirs.length || d.perm ? '' : 'stay'} ${o.cls ?? ''}" ${o.attr ?? ''} title="${esc(tileTitle(kind))}">
+    ${dirs.map(x => `<i class="ar ${x}"></i>`).join('')}${center}<span class="nm">${d.name}</span>${tl}${tr}${bl}${br}</div>`;
 }
 
 function tileTitle(kind: OKind): string {
   const d = TILES[kind];
+  const rules = R();
   if (d.perm) return `★${d.name}：${d.note}`;
-  return `${d.name}：${dirsText(d.dirs)}／置いたマスは${fxText(d.fx)}${d.note ? `（${d.note}）` : ''}／重さ${d.weight}`;
+  return `${d.name}：${dirsText(tileDirs(kind, rules))}／置いたマスは${fxText(d.fx)}${d.note ? `（${d.note}）` : ''}／重さ${weightOf(kind, rules)}`;
 }
 
 /** 効果つきの説明カード（市場・開始画面） */
 function infoHTML(kind: OKind, extra = '', count = 0): string {
   const d = TILES[kind];
-  const rules = s?.rules ?? readRulesDraft();
+  const rules = R();
   const badges = [
+    d.cost !== null ? `<span class="badge bc">コスト${d.cost}</span>` : '<span class="badge">初期</span>',
+    !d.perm ? `<span class="badge w">重さ${weightOf(kind, rules)}</span>` : '',
     rules.needs && d.buyNeed ? `<span class="badge imp">衝動${d.buyNeed}で取得</span>` : '',
     rules.needs && d.dropNeed ? `<span class="badge calm">理性${d.dropNeed}で排除</span>` : '',
-    !d.perm && d.weight !== 1 ? `<span class="badge">重さ${d.weight}</span>` : '',
   ].join('');
-  const text = d.perm ? d.note : `${dirsText(d.dirs)}${d.note ? `．${d.note}` : ''}`;
-  return `<div class="info ${d.perm ? 'perm' : ''}">${tileHTML(kind, { count })}
-    <div class="it"><div class="in"><b>${d.perm ? '★' : ''}${d.name}</b>${d.cost !== null ? `<span class="cost">${d.cost}</span>` : ''}</div>
+  const text = d.perm ? d.note : `${dirsText(tileDirs(kind, rules))}${d.note && kind !== 'JUNK' ? `．${d.note}` : ''}`;
+  return `<div class="info ${d.perm ? 'perm' : ''}">${tileHTML(kind, { count, cost: true })}
+    <div class="it"><div class="in"><b>${d.perm ? '★' : ''}${d.name}</b></div>
       <div class="id">${esc(text ?? '')}</div><div class="ib">${badges}</div>${extra}</div></div>`;
 }
 
@@ -132,6 +146,9 @@ const RULE_OPTS: { key: keyof Rules; label: string; choices: [string, string][] 
   { key: 'hes', label: 'ためらい', choices: [['first', '出たらそこで終わり（タイルは効果なし）'], ['second', '2枚目が出たら終わり（タイルは額3）']] },
   { key: 'hesCount', label: '初期の袋のためらい', choices: [['1', '1枚'], ['2', '2枚'], ['3', '3枚']] },
   { key: 'midBuy', label: '中央の行（START の左右）', choices: [['true', '額2（ためらいの最低保証）'], ['false', '効果なし']] },
+  { key: 'weights', label: '捨てる重さ', choices: [['heavy', '重い（欲しい2・ガラクタ3・↑へ行くタイル2）'], ['light', '軽い（ガラクタ2，ほかは1）']] },
+  { key: 'junk', label: 'ガラクタの矢印', choices: [['right', '→だけ'], ['four', '4方向']] },
+  { key: 'special', label: '特別なマス', choices: [['true', 'あり（捨欲の中の額マス・福袋・おまかせ処分）'], ['false', 'なし']] },
   { key: 'traces', label: '片付けた跡の壁', choices: [['false', 'なし'], ['true', 'あり（排除したマスに入れなくなる）']] },
   { key: 'board', label: '盤', choices: Object.values(OBOARDS).map(b => [b.name, b.label] as [string, string]) },
   { key: 'cols', label: '列の増減（盤の印刷）', choices: [['v06', '衝動は額＋・量−，理性は量＋・額−'], ['bonus', '上乗せだけ（衝動は額＋，理性は量＋）'], ['none', 'なし']] },
@@ -141,7 +158,7 @@ const RULE_OPTS: { key: keyof Rules; label: string; choices: [string, string][] 
 ];
 
 function savedRules(): Rules {
-  try { return normRules(JSON.parse(store.get('rules') ?? '{}')); } catch { return { ...DEFAULT_RULES }; }
+  try { return normRules(JSON.parse(store.get('rules2') ?? '{}')); } catch { return { ...DEFAULT_RULES }; }
 }
 /** 開始画面で今選んでいるルール（画面に無ければ保存してあるもの） */
 function readRulesDraft(): Rules {
@@ -183,10 +200,10 @@ function bindOptions() {
     app.querySelector<HTMLElement>('#startbagBody')!.innerHTML = startingBag(readRulesDraft().hesCount).map(([k, n]) => infoHTML(k, '', n)).join('');
   };
   setSel.onchange = () => { store.set('set', setSel.value); info(); };
-  app.querySelectorAll<HTMLSelectElement>('select[data-rule]').forEach(x => x.onchange = () => { store.set('rules', JSON.stringify(readRulesDraft())); info(); });
+  app.querySelectorAll<HTMLSelectElement>('select[data-rule]').forEach(x => x.onchange = () => { store.set('rules2', JSON.stringify(readRulesDraft())); info(); });
   app.querySelectorAll<HTMLInputElement>('#custom input').forEach(x => x.onchange = () =>
     store.set('tiles', [...app.querySelectorAll<HTMLInputElement>('#custom input:checked')].map(y => y.value).join(',')));
-  app.querySelector<HTMLButtonElement>('#resetRules')!.onclick = () => { store.set('rules', JSON.stringify(DEFAULT_RULES)); render(); };
+  app.querySelector<HTMLButtonElement>('#resetRules')!.onclick = () => { store.set('rules2', JSON.stringify(DEFAULT_RULES)); render(); };
   info();
 }
 
@@ -196,7 +213,7 @@ function readOptions(): { rules: Rules; set: string; tiles?: OKind[]; market: OK
   const tiles = [...app.querySelectorAll<HTMLInputElement>('#custom input:checked')].map(x => x.value as OKind);
   let market: OKind[];
   try { market = marketFromChoice(set === 'custom' ? tiles : set); } catch (e) { alert((e as Error).message); return null; }
-  store.set('rules', JSON.stringify(rules));
+  store.set('rules2', JSON.stringify(rules));
   store.set('set', set);
   if (set === 'custom') store.set('tiles', tiles.join(','));
   return { rules, set, tiles: set === 'custom' ? tiles : undefined, market };
@@ -210,6 +227,8 @@ function rulesHTML() {
     <li>盤の端へは出られず，置いたタイルの上に残ります．矢印が複数あるタイルは向きを選びます．矢印のないタイルは置いたタイルの上で止まります</li>
     <li>引くほど通ったマスが塗り替わります．良いマスに立っているうちに止めるか，もう1枚引くか</li>
     <li>手番の終わりに盤のタイルを全部はがして捨て山へ．袋が空になったら捨て山を袋に戻します</li>
+    <li>特別なマス：捨欲の領域にも<b class="cb">額</b>のマスが点々とある（量のタイルで塗り替えられる）．<b>福袋</b>は共有の福袋からくじで1枚もらう．<b>おまかせ処分</b>（？のマス）は袋と捨て山からくじで1枚排除</li>
+    <li>タイルの四隅：左上＝コスト，右上＝取得の条件（衝n＝衝動n以上の列），左下＝捨てる重さ，右下＝排除の条件（理n＝理性n以上の列）</li>
     <li>高いものは<b>衝動の列でないと取得できない</b>，思い入れのあるものは<b>理性の列でないと排除できない</b>（タイルの説明に書いてあります）</li>
     <li>★お気に入りは取得したら自分の前に置き，効果がずっと続きます（袋に入らない．各1枚）</li>
     <li>タイルが0枚になったら達成．そのラウンドの最後まで遊び，排除した枚数が多い人の勝ち（同じならお気に入りのコストの合計）</li>
@@ -333,7 +352,7 @@ function setup() {
 const cur = () => s!.players[s!.current];
 const colLabel = (x: number) => (x < 0 ? `理性${-x}` : x > 0 ? `衝動${x}` : '中');
 const rowLabel = (y: number) => (y > 0 ? `物欲${y}` : y < 0 ? `捨欲${-y}` : '中央');
-const fxWord = (fx: Fx) => (fx.kind === 'buy' ? `額${fx.amount}で取得` : fx.kind === 'remove' ? `量${fx.amount}で排除` : '効果なし');
+const fxWord = (fx: Fx) => (fx.kind === 'buy' ? `額${fx.amount}で取得` : fx.kind === 'remove' ? `量${fx.amount}で排除` : fx.kind === 'gacha' ? '福袋を引く' : fx.kind === 'purge' ? 'おまかせ処分' : '効果なし');
 
 let lastTopId = 0;
 
@@ -362,7 +381,9 @@ function boardHTML(p: OPlayer, mine: boolean): string {
       const wall = st.rules.traces && p.traces.some(t => samePos(t, pos));
       const cls = ['cell', pf.kind, here ? 'here' : '', pick ? 'pick' : '', x === 0 && y === 0 ? 'start' : ''].join(' ');
       const printed = x === 0 && y === 0 ? '<span class="pf st">START</span>'
-        : pf.kind === 'none' ? '' : `<span class="pf"><small>${pf.kind === 'buy' ? '額' : '量'}</small>${pf.amount}</span>`;
+        : pf.kind === 'none' ? '' : pf.kind === 'gacha' ? '<span class="pf sp" title="福袋：共有の福袋から1枚もらう">福<small>福袋</small></span>'
+        : pf.kind === 'purge' ? '<span class="pf sp" title="おまかせ処分：袋と捨て山からくじで1枚排除">？<small>おまかせ</small></span>'
+        : `<span class="pf"><small>${pf.kind === 'buy' ? '額' : '量'}</small>${pf.amount}</span>`;
       const tile = top ? tileHTML(top.kind, { fx: tileFx(top.kind, envOf(st, p)), seq: p.placed.indexOf(top) + 1, stack: stack.length, cls: `${stack.length > 1 ? 'stacked' : ''} ${isNew && top === newest ? 'new' : ''}` }) : '';
       h += `<div class="${cls}" style="--a:${Math.min(1, 0.16 + pf.amount * 0.12)}" ${pick ? `data-dir="${pick.dir}"` : ''}>${printed}${wall ? '<span class="wall" title="片付けた跡（入れない）">跡</span>' : ''}${tile}
         ${here ? `<span class="herebadge">${st.turn === 'branch' ? '出る向きを選ぶ' : 'いまここ'}</span>` : ''}${pick ? `<span class="pickar">${ARROW[pick.dir]}</span>` : ''}</div>`;
@@ -418,6 +439,7 @@ function render() {
     <button id="sound" title="自分の番の合図音">${soundOn() ? '🔔 音あり' : '🔕 音なし'}</button>
     <button id="quit">${net ? '部屋を出る' : 'やめる'}</button></header>
   ${turnBanner()}
+  ${st.log.length > 1 ? `<div class="lastlog">直前：${esc(st.log[st.log.length - 1])}</div>` : ''}
   <div class="seatsbar">${st.players.map((q, i) => `<div class="seat ${i === st.current && st.phase === 'play' ? 'now' : ''} ${i === me ? 'you' : ''}">
       <span class="dot p${i}"></span><b>${esc(q.name)}</b>${i === me ? '<em>あなた</em>' : ''}${q.finished ? ' ✓' : ''}${st.winners.includes(i) ? ' 🏆' : ''}
       <small>持ち物${ownedTiles(q).length}・排除${q.removed}${q.perms.length ? `・★${q.perms.map(k => TILES[k].name).join('・')}` : ''}</small></div>`).join('')}</div>
@@ -491,7 +513,7 @@ function controlsHTML(): string {
       if (here.kind === 'remove') {
         const flowSel = p.placed.filter(c => sel.remove.has(c.id));
         const big = p.perms.includes('BIGDAY');
-        const load = big ? 0 : removeLoad(flowSel);
+        const load = big ? 0 : removeLoad(flowSel, st.rules);
         const dn = discardLimit(p, here.amount, isDeep(p.pos.y, st.board));
         const discSel = p.discard.filter(c => sel.remove.has(c.id));
         const pick = (c: Tile) => canDropAt(c.kind, p.pos.x, st.rules) && sel.roomba !== c.id
@@ -500,6 +522,15 @@ function controlsHTML(): string {
           <div class="chips pickable">${p.placed.map(pick).join('')}</div>
           ${dn ? `<p>捨て山からも${dn}枚まで（重さなし）　<span class="meter ${discSel.length > dn ? 'over' : ''}">${discSel.length} / ${dn}</span></p><div class="chips pickable">${p.discard.map(pick).join('') || '<span class="muted">捨て山は空です</span>'}</div>` : ''}${rb}
           <button id="resolve" class="primary big" ${load > here.amount || discSel.length > dn ? 'disabled' : ''}>${sel.remove.size ? `${sel.remove.size}枚排除して手番を終える` : '何も捨てずに手番を終える'}</button>`;
+      }
+      if (here.kind === 'gacha') {
+        return `<p><b class="cg">福袋</b>：みんなで共有の福袋から，くじで1枚もらいます（捨て山へ）．残り ${st.gacha.length} 枚</p>
+          <div class="chips">${chipsHTML(st.gacha.map(k => ({ id: 0, kind: k })))}</div>${rb}
+          <button id="resolve" class="primary big" >${st.gacha.length ? '福袋を引いて手番を終える' : '手番を終える（福袋は空）'}</button>`;
+      }
+      if (here.kind === 'purge') {
+        return `<p><b class="cg">おまかせ処分</b>：あなたの袋と捨て山（合わせて ${p.bag.length + p.discard.length} 枚）から，くじで1枚排除します．重さ・条件は関係なし．何が消えるかは運しだい</p>${rb}
+          <button id="resolve" class="primary big">くじを引いて手番を終える</button>`;
       }
       return `<p>効果のないマスで止まりました</p>${rb}<button id="resolve" class="primary big">手番を終える</button>`;
     }

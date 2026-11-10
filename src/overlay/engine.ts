@@ -4,7 +4,8 @@
 //   止まったマスの「一番上に見えている効果」（タイルがあればタイル，なければ盤の印刷）で取得か排除をする
 //   コマは無い．「今いるマス」は最後に置いたタイルの矢印の先（画面ではそのマスを光らせる）
 
-import { DELTA, DIRS, Dir, Fx, HES_FX, LIGHT_MAX, LIGHT_PER, MARKET, NO_FX, OKind, TILES, UNLIMITED_KINDS, isPerm, startingBag } from './tiles';
+import { DELTA, DIRS, Dir, Fx, GACHA_FX, GACHA_POOL, HES_FX, LIGHT_MAX, LIGHT_PER, MARKET, NO_FX, OKind, PURGE_FX, TILES, UNLIMITED_KINDS, isPerm, startingBag, tileDirs, weightOf } from './tiles';
+import { nextRandom } from '../engine/rng';
 import { shuffle } from '../engine/rng';
 
 export const X_MIN = -3, X_MAX = 3;
@@ -12,6 +13,7 @@ export const X_MIN = -3, X_MAX = 3;
 /** 盤の縦の目盛り：buy[i] は中央から i+1 行上の額，remove[i] は i+1 行下の量（一番下は捨て山からも1枚） */
 export interface OBoard { name: string; label: string; buy: number[]; remove: number[] }
 export const OBOARDS: Record<string, OBoard> = {
+  gentle: { name: 'gentle', label: 'ゆるやか（物欲 2,3,4／捨欲 1,1,2,2）', buy: [2, 3, 4], remove: [1, 1, 2, 2] },
   basic: { name: 'basic', label: '基本（物欲 2,3,4／捨欲 1,2,3,3）', buy: [2, 3, 4], remove: [1, 2, 3, 3] },
   slow: { name: 'slow', label: 'ゆっくり（物欲 1,1,2,2,3,3,4／捨欲 0,1,1,2,3）', buy: [1, 1, 2, 2, 3, 3, 4], remove: [0, 1, 1, 2, 3] },
 };
@@ -43,8 +45,14 @@ export interface Rules {
   refill: boolean;
   /** 中央の行（START 以外）に額2 */
   midBuy: boolean;
+  /** 重さ：heavy = ↑へ行くタイルと初期タイルは捨てにくい／light = v0.1 */
+  weights: 'heavy' | 'light';
+  /** ガラクタの矢印：right = →だけ／four = 4方向 */
+  junk: 'right' | 'four';
+  /** 特別なマス：捨欲の領域に点々とある額のマス，福袋，おまかせ処分 */
+  special: boolean;
 }
-export const DEFAULT_RULES: Rules = { hes: 'first', hesCount: 2, traces: false, board: 'basic', cols: 'v06', needs: true, lastCard: true, refill: true, midBuy: true };
+export const DEFAULT_RULES: Rules = { hes: 'first', hesCount: 2, traces: false, board: 'gentle', cols: 'v06', needs: true, lastCard: true, refill: true, midBuy: true, weights: 'heavy', junk: 'right', special: true };
 
 /** 外から来たルールを整える（不正な値は既定に） */
 export function normRules(r: Partial<Rules> | undefined | null): Rules {
@@ -60,6 +68,9 @@ export function normRules(r: Partial<Rules> | undefined | null): Rules {
     lastCard: bool(x.lastCard, d.lastCard),
     refill: bool(x.refill, d.refill),
     midBuy: bool(x.midBuy, d.midBuy),
+    weights: x.weights === 'light' || x.weights === 'heavy' ? x.weights : d.weights,
+    junk: x.junk === 'four' || x.junk === 'right' ? x.junk : d.junk,
+    special: bool(x.special, d.special),
   };
 }
 
@@ -79,8 +90,20 @@ export function colMod(x: number, kind: 'buy' | 'remove', cols: Rules['cols']): 
   return cols === 'bonus' ? Math.max(0, v) : v;
 }
 
+/** 特別なマス（基本・ゆるやかの盤）：捨欲の領域の額のマス，福袋，おまかせ処分．数字はそのまま（列の増減なし） */
+export const SPECIAL_CELLS: { x: number; y: number; fx: Fx }[] = [
+  { x: 0, y: -2, fx: { kind: 'buy', amount: 2 } }, { x: -2, y: -1, fx: { kind: 'buy', amount: 2 } },
+  { x: -1, y: -3, fx: { kind: 'buy', amount: 2 } }, { x: 1, y: -4, fx: { kind: 'buy', amount: 3 } },
+  { x: -1, y: 1, fx: GACHA_FX }, { x: 2, y: 0, fx: GACHA_FX }, { x: -2, y: 3, fx: GACHA_FX },
+  { x: 2, y: -1, fx: PURGE_FX }, { x: -2, y: -2, fx: PURGE_FX },
+];
+export const specialAt = (pos: Pos, b: OBoard, rules: Rules): Fx | undefined =>
+  (rules.special && b.buy.length === 3 && b.remove.length === 4 ? SPECIAL_CELLS.find(c => c.x === pos.x && c.y === pos.y)?.fx : undefined);
+
 /** 盤に印刷してある効果（列の増減込み） */
 export function printedFx(pos: Pos, b: OBoard, rules: Rules): Fx {
+  const sp = specialAt(pos, b, rules);
+  if (sp) return sp;
   if (pos.y === 0) return pos.x !== 0 && rules.midBuy ? { kind: 'buy', amount: MID_BUY } : NO_FX;
   const kind = pos.y > 0 ? 'buy' : 'remove';
   const base = pos.y > 0 ? b.buy[pos.y - 1] : b.remove[-pos.y - 1];
@@ -114,12 +137,12 @@ export const stackAt = (placed: Placed[], pos: Pos) => placed.filter(t => samePo
 export function effectAt(env: Env, placed: Placed[], pos: Pos): Fx {
   const top = topTile(placed, pos);
   const fx = top ? tileFx(top.kind, env) : printedFx(pos, env.board, env.rules);
-  return fx.kind !== 'none' && env.perms.includes('KODAWARI') ? { kind: fx.kind, amount: fx.amount + 1 } : fx;
+  return (fx.kind === 'buy' || fx.kind === 'remove') && env.perms.includes('KODAWARI') ? { kind: fx.kind, amount: fx.amount + 1 } : fx;
 }
 
 /** 出られる向き（コンパスがあれば矢印のあるタイルは好きな向き） */
 export function dirsOf(kind: OKind, env: Env): Dir[] {
-  const d = TILES[kind].dirs;
+  const d = tileDirs(kind, env.rules);
   return d.length && env.perms.includes('COMPASS') ? DIRS : d;
 }
 export const step = (pos: Pos, dir: Dir): Pos => ({ x: pos.x + DELTA[dir][0], y: pos.y + DELTA[dir][1] });
@@ -178,6 +201,8 @@ export interface OState {
   nextId: number;
   board: OBoard;
   rules: Rules;
+  /** 福袋の残り（全員で共有） */
+  gacha: OKind[];
 }
 
 export type OAction =
@@ -195,7 +220,7 @@ export function newOverlayGame(
   const rules = normRules(opts.rules);
   const s: OState = {
     players: [], market: {}, current: 0, round: 1, phase: 'play', turn: 'move', winners: [], log: [], rng: seed, nextId: 1,
-    board: OBOARDS[rules.board], rules,
+    board: OBOARDS[rules.board], rules, gacha: GACHA_POOL.flatMap(([k, n]) => Array.from({ length: n }, () => k)),
   };
   for (const k of opts.market ?? MARKET) s.market[k] = UNLIMITED_KINDS.includes(k) ? UNLIMITED : Math.max(2, setup.length);
   for (const p of setup) {
@@ -223,9 +248,9 @@ export const canBuyAt = (k: OKind, x: number, rules: Rules) => !rules.needs || (
 export const canDropAt = (k: OKind, x: number, rules: Rules) => !rules.needs || (TILES[k].dropNeed ?? 0) <= Math.max(0, -x);
 
 /** 排除の重さの合計（道連れ袋1枚につき，ほかの1枚の重さを0にできる．重いものから） */
-export function removeLoad(tiles: Tile[]): number {
+export function removeLoad(tiles: Tile[], rules: Rules): number {
   const drags = tiles.filter(c => TILES[c.kind].drag).length;
-  const others = tiles.filter(c => !TILES[c.kind].drag).map(c => TILES[c.kind].weight).sort((a, b) => b - a);
+  const others = tiles.filter(c => !TILES[c.kind].drag).map(c => weightOf(c.kind, rules)).sort((a, b) => b - a);
   return drags + others.slice(drags).reduce((n, w) => n + w, 0);
 }
 /** 捨て山から排除できる枚数（一番下の行で1枚．大容量ゴミ袋なら量の枚数を足す） */
@@ -284,7 +309,7 @@ function resolve(s: OState, p: OPlayer, a: { buy: OKind[]; remove: number[]; roo
     need[k] = (need[k] ?? 0) + 1;
   }
   for (const [k, n] of Object.entries(need)) if ((s.market[k as OKind] ?? 0) < n!) throw new ORuleError(`${TILES[k as OKind].name}は売り切れです`);
-  if (total > power.amount) throw new ORuleError(`額${power.amount}を超えています`);
+  if (power.kind === 'buy' && total > power.amount) throw new ORuleError(`額${power.amount}を超えています`);
 
   const ids = [...new Set(a.remove)];
   const fromFlow = ids.map(id => p.placed.find(c => c.id === id)).filter(Boolean) as Tile[];
@@ -297,7 +322,7 @@ function resolve(s: OState, p: OPlayer, a: { buy: OKind[]; remove: number[]; roo
     if (power.kind !== 'remove' && ids.length) throw new ORuleError('量のマスでしか排除できません');
     const hard = [...fromFlow, ...fromDiscard].find(c => !canDropAt(c.kind, pos.x, s.rules));
     if (hard) throw new ORuleError(`${TILES[hard.kind].name}は理性${TILES[hard.kind].dropNeed}以上の列でないと排除できません`);
-    const load = p.perms.includes('BIGDAY') ? 0 : removeLoad(fromFlow);
+    const load = p.perms.includes('BIGDAY') ? 0 : removeLoad(fromFlow, s.rules);
     if (power.kind === 'remove' && load > power.amount) throw new ORuleError(`量${power.amount}を超えています`);
   }
   if (a.roomba !== undefined && a.roomba !== null) {
@@ -316,9 +341,31 @@ function resolve(s: OState, p: OPlayer, a: { buy: OKind[]; remove: number[]; roo
   p.discard = p.discard.filter(c => !gone.has(c.id));
   p.removed += gone.size;
   if (s.rules.traces && ids.length && !noTraceZone(pos) && !p.traces.some(t => samePos(t, pos))) p.traces.push({ ...pos });
+  // 福袋：共有の福袋から無作為に1枚もらう（捨て山へ）
+  let lucky = '';
+  if (power.kind === 'gacha') {
+    if (s.gacha.length) {
+      const k = s.gacha.splice(Math.floor(nextRandom(s) * s.gacha.length), 1)[0];
+      p.discard.push({ id: s.nextId++, kind: k });
+      p.bought++;
+      lucky = `福袋から「${TILES[k].name}」`;
+    } else lucky = '福袋は空だった';
+  }
+  // おまかせ処分：袋と捨て山から無作為に1枚排除（重さ・条件なし）
+  if (power.kind === 'purge') {
+    const pool = [...p.bag, ...p.discard];
+    if (pool.length) {
+      const t = pool[Math.floor(nextRandom(s) * pool.length)];
+      p.bag = p.bag.filter(c => c !== t);
+      p.discard = p.discard.filter(c => c !== t);
+      p.removed++;
+      lucky = `おまかせ処分で「${TILES[t.kind].name}」を排除`;
+    } else lucky = 'おまかせ処分：袋も捨て山も空だった';
+  }
 
   const parts = [`${p.name}：(${pos.x},${pos.y})で止まった`];
-  if (power.kind !== 'none') parts.push(`${power.kind === 'buy' ? '額' : '量'}${power.amount}`);
+  if (power.kind === 'buy' || power.kind === 'remove') parts.push(`${power.kind === 'buy' ? '額' : '量'}${power.amount}`);
+  if (lucky) parts.push(lucky);
   if (ids.length) parts.push(`${ids.length}枚排除`);
   if (a.buy.length) parts.push(`取得 ${a.buy.map(k => TILES[k].name).join('・')}`);
   if (a.roomba != null) parts.push('ルンバで1枚排除');

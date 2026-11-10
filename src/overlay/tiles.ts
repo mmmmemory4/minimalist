@@ -7,8 +7,10 @@ export const DIRS: Dir[] = ['U', 'D', 'L', 'R'];
 export const DELTA: Record<Dir, [number, number]> = { U: [0, 1], D: [0, -1], L: [-1, 0], R: [1, 0] };
 export const ARROW: Record<Dir, string> = { U: '↑', D: '↓', L: '←', R: '→' };
 
-/** マスの効果：取得の額か排除の量 */
-export interface Fx { kind: 'buy' | 'remove' | 'none'; amount: number }
+/** マスの効果：取得の額／排除の量／福袋（福袋から1枚もらう）／おまかせ処分（袋と捨て山から無作為に1枚排除） */
+export interface Fx { kind: 'buy' | 'remove' | 'none' | 'gacha' | 'purge'; amount: number }
+export const GACHA_FX: Fx = { kind: 'gacha', amount: 1 };
+export const PURGE_FX: Fx = { kind: 'purge', amount: 1 };
 export const NO_FX: Fx = { kind: 'none', amount: 0 };
 const buy = (amount: number): Fx => ({ kind: 'buy', amount });
 const rem = (amount: number): Fx => ({ kind: 'remove', amount });
@@ -30,8 +32,10 @@ export interface TileDef {
   fx: Fx;
   /** 取得コスト（null は市場に無い） */
   cost: number | null;
-  /** 捨てる重さ */
+  /** 捨てる重さ（v0.1 の値） */
   weight: number;
+  /** 捨てる重さ（v0.2 の「重い」ルール：↑へ行くタイルと初期タイルは捨てにくい） */
+  heavy?: number;
   /** これを排除したとき，置いたタイルからもう1枚を重さ0で排除できる */
   drag?: boolean;
   /** お気に入り（永続） */
@@ -54,30 +58,30 @@ const t = (kind: OKind, name: string, dirs: Dir[], fx: Fx, cost: number | null, 
   ({ kind, name, dirs, fx, cost, weight: 1, ...o });
 
 export const TILES: Record<OKind, TileDef> = {
-  WANT:   t('WANT', '欲しい', ['U'], buy(1), null),
+  WANT:   t('WANT', '欲しい', ['U'], buy(1), null, { heavy: 2 }),
   DOUBT:  t('DOUBT', '迷い', ['L'], buy(1), null),
-  JUNK:   t('JUNK', 'ガラクタ', ['U', 'D', 'L', 'R'], NO_FX, null, { weight: 2, dropNeed: 1 }),
+  JUNK:   t('JUNK', 'ガラクタ', ['U', 'D', 'L', 'R'], NO_FX, null, { weight: 2, heavy: 3, dropNeed: 1, note: '矢印はルールで変わる（→だけ／4方向）' }),
   HES:    t('HES', 'ためらい', ['R', 'L'], NO_FX, null, { dropNeed: 1, note: 'ルールで変わる：出たらそこで終わり（効果なし）／2枚目が出たら終わり（額3）' }),
   DOWN:   t('DOWN', '片付けたい', ['D'], NO_FX, 1),
-  BR:     t('BR', '分かれ道', ['D', 'R'], buy(2), 2),
-  BREATH: t('BREATH', '深呼吸', ['D', 'L'], buy(2), 2),
-  SWING:  t('SWING', '行ったり来たり', ['U', 'D'], buy(2), 2),
-  UP2:    t('UP2', '欲しい欲しい', ['U'], buy(3), 1),
+  BR:     t('BR', '分かれ道', ['D', 'R'], buy(2), 3),
+  BREATH: t('BREATH', '深呼吸', ['D', 'L'], buy(2), 3),
+  SWING:  t('SWING', '行ったり来たり', ['U', 'D'], buy(2), 3, { heavy: 2 }),
+  UP2:    t('UP2', '欲しい欲しい', ['U'], buy(3), 1, { heavy: 2 }),
   RUSH:   t('RUSH', '衝動買い', ['R'], buy(3), 1),
-  CALM:   t('CALM', '冷静', ['L'], rem(1), 2),
-  DOWN2:  t('DOWN2', '断捨離', ['D'], rem(1), 4),
+  CALM:   t('CALM', '冷静', ['L'], rem(2), 3),
+  DOWN2:  t('DOWN2', '断捨離', ['D'], rem(2), 4),
   LIGHT:  t('LIGHT', '軽やか', ['D'], rem(0), 4, { note: `量は排除した枚数÷${LIGHT_PER}（最大${LIGHT_MAX}）` }),
   DRAG:   t('DRAG', '道連れ袋', ['D'], buy(2), 3, { drag: true, buyNeed: 1, note: '排除したとき，置いたタイルからもう1枚を重さ0で排除' }),
-  MEMO:   t('MEMO', '思い出の品', ['U'], rem(2), 2, { dropNeed: 2 }),
-  FREE:   t('FREE', '気まま', ['U', 'D', 'L', 'R'], buy(2), 3),
-  REST:   t('REST', 'ひと休み', [], rem(1), 2),
+  MEMO:   t('MEMO', '思い出の品', ['U'], rem(3), 3, { heavy: 2, dropNeed: 2 }),
+  FREE:   t('FREE', '気まま', ['U', 'D', 'L', 'R'], buy(2), 5, { heavy: 2 }),
+  REST:   t('REST', 'ひと休み', [], rem(2), 3),
   TREAT:  t('TREAT', 'ご褒美', [], buy(4), 3),
-  CLEAN:  t('CLEAN', '大掃除', [], rem(3), 5, { buyNeed: 2 }),
-  ROOMBA:   t('ROOMBA', 'ルンバ', [], NO_FX, 5, { perm: true, weight: 0, buyNeed: 1, note: '手番の終わりに，どこで止まっても置いたタイルから1枚を排除できる（条件・重さなし）' }),
-  BIGDAY:   t('BIGDAY', '大掃除の日', [], NO_FX, 4, { perm: true, weight: 0, buyNeed: 2, note: '捨てるマスで止まったら，置いたタイルを何枚でも排除できる（量・重さを無視）' }),
+  CLEAN:  t('CLEAN', '大掃除', [], rem(4), 5, { buyNeed: 2 }),
+  ROOMBA:   t('ROOMBA', 'ルンバ', [], NO_FX, 6, { perm: true, weight: 0, buyNeed: 1, note: '手番の終わりに，どこで止まっても置いたタイルから1枚を排除できる（条件・重さなし）' }),
+  BIGDAY:   t('BIGDAY', '大掃除の日', [], NO_FX, 5, { perm: true, weight: 0, buyNeed: 2, note: '捨てるマスで止まったら，置いたタイルを何枚でも排除できる（量・重さを無視）' }),
   BAG:      t('BAG', '大容量ゴミ袋', [], NO_FX, 4, { perm: true, weight: 0, buyNeed: 2, note: '捨てるマスで止まったら，捨て山からも量と同じ枚数まで排除できる（重さなし）' }),
-  COMPASS:  t('COMPASS', 'コンパス', [], NO_FX, 5, { perm: true, weight: 0, buyNeed: 1, note: '矢印のあるタイルを好きな向きに出られる' }),
-  KODAWARI: t('KODAWARI', 'こだわり', [], NO_FX, 4, { perm: true, weight: 0, buyNeed: 1, note: '止まったマスの額・量 +1' }),
+  COMPASS:  t('COMPASS', 'コンパス', [], NO_FX, 6, { perm: true, weight: 0, buyNeed: 1, note: '矢印のあるタイルを好きな向きに出られる' }),
+  KODAWARI: t('KODAWARI', 'こだわり', [], NO_FX, 5, { perm: true, weight: 0, buyNeed: 1, note: '止まったマスの額・量 +1' }),
 };
 
 export const PERMS: OKind[] = ['ROOMBA', 'BIGDAY', 'BAG', 'COMPASS', 'KODAWARI'];
@@ -88,7 +92,18 @@ export const MARKET: OKind[] = ['DOWN', 'BR', 'BREATH', 'SWING', 'UP2', 'RUSH', 
 /** 初期の袋（ためらいの枚数はルールで変わる） */
 export const startingBag = (hesCount: number): [OKind, number][] => [['WANT', 2], ['DOUBT', 1], ['JUNK', 1], ['HES', hesCount]];
 
-export const fxText = (fx: Fx) => (fx.kind === 'buy' ? `額${fx.amount}` : fx.kind === 'remove' ? `量${fx.amount}` : '効果なし');
+export const fxText = (fx: Fx) => (fx.kind === 'buy' ? `額${fx.amount}` : fx.kind === 'remove' ? `量${fx.amount}` : fx.kind === 'gacha' ? '福袋' : fx.kind === 'purge' ? 'おまかせ処分' : '効果なし');
+
+/** ルールで変わる部分：重さ（重い／v0.1）とガラクタの矢印（→だけ／4方向） */
+export interface TileRules { weights: 'heavy' | 'light'; junk: 'right' | 'four' }
+export const weightOf = (k: OKind, r: TileRules) => (r.weights === 'heavy' ? TILES[k].heavy ?? TILES[k].weight : TILES[k].weight);
+export const tileDirs = (k: OKind, r: TileRules): Dir[] => (k === 'JUNK' && r.junk === 'right' ? ['R'] : TILES[k].dirs);
+
+/** 福袋の中身（全員で共有．強いタイルから弱いタイルまで．引いたら戻さない） */
+export const GACHA_POOL: [OKind, number][] = [
+  ['FREE', 2], ['TREAT', 2], ['REST', 2], ['DOWN2', 2], ['CALM', 2], ['BREATH', 1], ['BR', 1],
+  ['DOWN', 3], ['UP2', 2], ['RUSH', 1], ['WANT', 2], ['JUNK', 1],
+];
 export const dirsText = (dirs: Dir[]) => (dirs.length ? dirs.map(d => ARROW[d]).join('か') : '動かない');
 
 // ---- 市場に並べるタイルのセット（開始時に選ぶ）．片付けたいは必ず入る ----

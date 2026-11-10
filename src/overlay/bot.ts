@@ -1,7 +1,7 @@
 // オーバーレイ版のボット．引くか止めるかは「止めたときの価値」と「引き続けたときの期待値」（2枚先まで）を比べて決める．
 // 型（genome）ごとに取得の優先順が違う
 
-import { Dir, OKind, TILES, isPerm } from './tiles';
+import { Dir, OKind, TILES, isPerm, weightOf } from './tiles';
 import {
   Env, OAction, OPlayer, OState, Tile, Walk, applyOverlay, canBuyAt, canDraw, canDropAt, dirsOf, discardLimit, effectAt, envOf,
   isDeep, isLastCard, leaveTile, ownedTiles, putTile, removeLoad,
@@ -15,16 +15,20 @@ export interface OGenome {
 }
 
 export const OPRESETS: Record<string, OGenome> = {
-  light: { greed: 1.0, buy: [{ kind: 'LIGHT', cap: 2 }, { kind: 'DOWN2', cap: 1 }, { kind: 'CALM', cap: 1 }, { kind: 'DRAG', cap: 1 }, { kind: 'DOWN', cap: 2 }] },
+  light: { greed: 1.0, buy: [{ kind: 'LIGHT', cap: 2 }, { kind: 'DOWN2', cap: 1 }, { kind: 'REST', cap: 1 }, { kind: 'CALM', cap: 1 }, { kind: 'DRAG', cap: 1 }, { kind: 'DOWN', cap: 2 }] },
   rest:  { greed: 1.0, buy: [{ kind: 'CLEAN', cap: 1 }, { kind: 'REST', cap: 2 }, { kind: 'BREATH', cap: 1 }, { kind: 'DOWN', cap: 1 }] },
-  fav:   { greed: 1.0, buy: [{ kind: 'BIGDAY', cap: 1 }, { kind: 'BAG', cap: 1 }, { kind: 'ROOMBA', cap: 1 }, { kind: 'KODAWARI', cap: 1 }, { kind: 'COMPASS', cap: 1 }, { kind: 'RUSH', cap: 1 }, { kind: 'UP2', cap: 1 }, { kind: 'DOWN', cap: 2 }] },
-  swing: { greed: 1.0, buy: [{ kind: 'SWING', cap: 2 }, { kind: 'FREE', cap: 1 }, { kind: 'MEMO', cap: 1 }, { kind: 'DOWN2', cap: 1 }, { kind: 'DOWN', cap: 1 }] },
-  mixed: { greed: 1.0, buy: [{ kind: 'DOWN2', cap: 1 }, { kind: 'REST', cap: 1 }, { kind: 'BR', cap: 1 }, { kind: 'BREATH', cap: 1 }, { kind: 'TREAT', cap: 1 }, { kind: 'DOWN', cap: 2 }] },
+  fav:   { greed: 1.0, buy: [{ kind: 'BIGDAY', cap: 1 }, { kind: 'BAG', cap: 1 }, { kind: 'ROOMBA', cap: 1 }, { kind: 'KODAWARI', cap: 1 }, { kind: 'COMPASS', cap: 1 }, { kind: 'RUSH', cap: 1 }, { kind: 'REST', cap: 1 }, { kind: 'UP2', cap: 1 }, { kind: 'DOWN', cap: 2 }] },
+  swing: { greed: 1.0, buy: [{ kind: 'SWING', cap: 2 }, { kind: 'MEMO', cap: 1 }, { kind: 'DOWN2', cap: 1 }, { kind: 'REST', cap: 1 }, { kind: 'DOWN', cap: 1 }] },
+  mixed: { greed: 1.0, buy: [{ kind: 'DOWN2', cap: 1 }, { kind: 'REST', cap: 1 }, { kind: 'CALM', cap: 1 }, { kind: 'BR', cap: 1 }, { kind: 'TREAT', cap: 1 }, { kind: 'DOWN', cap: 2 }] },
   nobuy: { greed: 1.0, buy: [{ kind: 'DOWN', cap: 2 }] },
 };
 export const OBOT_LABELS: Record<string, string> = {
   light: '身軽型', rest: 'ひと休み型', fav: 'お気に入り型', swing: '往復型', mixed: 'バランス型', nobuy: '最小限型',
 };
+
+/** 先読みの深さ（今の1枚のあとに何枚先まで読むか） */
+export let LOOK = 2;
+export const setLook = (n: number) => { LOOK = n; };
 
 interface Ctx { s: OState; p: OPlayer; g: OGenome; env: Env }
 
@@ -49,7 +53,7 @@ export function planBuy(c: Ctx, budget: number, x: number): { buy: OKind[]; valu
 
 /** 捨てたい順（大きいほど先に捨てる）：初期タイル > 型に無いタイル > 型のタイル */
 function trashScore(c: Ctx, t: Tile): number {
-  if (TILES[t.kind].cost === null) return 10 + TILES[t.kind].weight;
+  if (TILES[t.kind].cost === null) return 10 + weightOf(t.kind, c.s.rules);
   const i = c.g.buy.findIndex(b => b.kind === t.kind);
   return i < 0 ? 6 : 3 - i * 0.2;
 }
@@ -61,14 +65,15 @@ export function planRemove(c: Ctx, flow: Tile[], amount: number, deep: boolean, 
   const rules = c.s.rules;
   const cand = flow.filter(t => canDropAt(t.kind, xcol, rules)).sort((a, b) => trashScore(c, b) - trashScore(c, a));
   const chosen: Tile[] = [];
-  for (const t of cand) if (big || removeLoad([...chosen, t]) <= amount) chosen.push(t);
+  for (const t of cand) if (big || removeLoad([...chosen, t], rules) <= amount) chosen.push(t);
   const dn = discardLimit(c.p, amount, deep);
   const ds0 = c.p.discard.filter(t => canDropAt(t.kind, xcol, rules)).length;
   // 全部片付けられるなら全部（勝ち）．そうでなければ，型のタイルは残りが少なくなるまで取っておく
   const wipe = chosen.length + Math.min(dn, ds0) >= owned.length;
   const keepCore = !wipe && owned.length - chosen.length > 4;
   let picked = chosen.filter(t => !keepCore || trashScore(c, t) >= 5 || chosen.every(y => trashScore(c, y) < 5));
-  if (keepCore && picked.length === chosen.length && picked.every(t => trashScore(c, t) < 5)) picked = picked.slice(0, 1);
+  // 型のタイルしか捨てられないとき：初期タイルが残っているうちは捨てない（↓を捨てると初期タイルを捨てに行けなくなる）
+  if (keepCore && picked.length === chosen.length && picked.every(t => trashScore(c, t) < 5)) picked = owned.some(t => TILES[t.kind].cost === null) ? [] : picked.slice(0, 1);
   const remove = picked.map(t => t.id);
   let value = picked.reduce((n, t) => n + 2 + Math.max(0, trashScore(c, t)) * 0.2, 0);
   const ds = c.p.discard.filter(t => canDropAt(t.kind, xcol, rules)).sort((a, b) => trashScore(c, b) - trashScore(c, a)).slice(0, dn);
@@ -91,6 +96,9 @@ function stopValue(c: Ctx, w: Walk): number {
   const rb = c.p.perms.includes('ROOMBA') && w.placed.length ? 2 : 0;
   if (pw.kind === 'buy') return planBuy(c, pw.amount, w.pos.x).value + rb;
   if (pw.kind === 'remove') return planRemove(c, w.placed, pw.amount, isDeep(w.pos.y, c.s.board), w.pos.x).value + (w.placed.length > 1 ? rb : 0);
+  // 福袋：何が出るかわからないが1枚もらえる．おまかせ処分：1枚減る（残りが少ないほどうれしい）
+  if (pw.kind === 'gacha') return (c.s.gacha.length ? 2.2 : 0) + rb;
+  if (pw.kind === 'purge') return (c.p.bag.length + c.p.discard.length ? 2.6 : 0) + rb;
   return rb;
 }
 
@@ -133,7 +141,7 @@ export function chooseOverlayAction(s: OState, g: OGenome): OAction {
   switch (s.turn) {
     case 'branch': {
       const tile = p.placed[p.placed.length - 1];
-      const r = afterTile(c, p, tile, nextBag(p, s), 1, true);
+      const r = afterTile(c, p, tile, nextBag(p, s), LOOK, true);
       return { type: 'branch', dir: r.dir ?? dirsOf(tile.kind, c.env)[0] };
     }
     case 'resolve': {
@@ -146,7 +154,7 @@ export function chooseOverlayAction(s: OState, g: OGenome): OAction {
     case 'move': {
       if (!canDraw(p, s.rules) || (s.rules.lastCard && isLastCard(p))) return { type: 'stop' };
       if (!p.placed.length) return { type: 'draw' };
-      return contValue(c, p, nextBag(p, s), 1) > stopValue(c, p) ? { type: 'draw' } : { type: 'stop' };
+      return contValue(c, p, nextBag(p, s), LOOK) > stopValue(c, p) ? { type: 'draw' } : { type: 'stop' };
     }
   }
 }
