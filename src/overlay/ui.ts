@@ -422,8 +422,8 @@ function turnBanner(): string {
   const st = s!;
   if (st.phase === 'over') return `<div class="banner over">ゲーム終了</div>`;
   const p = cur();
-  if (st.current === me) return `<div class="banner mine"><span class="tri">▶</span> あなたの番です <small>${st.turn === 'resolve' ? '止まったマスの効果を使う' : st.turn === 'branch' ? '出る向きを選ぶ' : 'タイルを引くか，止める'}</small></div>`;
-  return `<div class="banner"><span class="dot p${st.current}"></span>${esc(p.name)}の番 <small>${me >= 0 ? `あなたの番まであと${(me - st.current + st.players.length) % st.players.length}人` : '観戦中'}</small></div>`;
+  if (st.current === me) return `<div class="banner mine"><span class="tri">▶</span> あなたの番です <small class="lap">${st.round}周目</small><small>${st.turn === 'resolve' ? '止まったマスの効果を使う' : st.turn === 'branch' ? '出る向きを選ぶ' : 'タイルを引くか，止める'}</small></div>`;
+  return `<div class="banner"><span class="dot p${st.current}"></span>${esc(p.name)}の番 <small class="lap">${st.round}周目</small><small>${me >= 0 ? `あなたの番まであと${(me - st.current + st.players.length) % st.players.length}人` : '観戦中'}</small></div>`;
 }
 
 function render() {
@@ -436,7 +436,7 @@ function render() {
   const human = me >= 0 ? st.players[me] : null;
   notifyTurn(mine);
   app.innerHTML = `
-  <header><b class="logo sm">ミニマリスト <span>オーバーレイ版</span></b> <span class="round">ラウンド ${st.round}</span>
+  <header><b class="logo sm">ミニマリスト <span>オーバーレイ版</span></b> <span class="round" title="全員が1回ずつ手番をすると1周">${st.round}周目</span>
     ${net ? `<span class="muted">部屋 ${esc(net.code)}</span>` : ''}
     <button id="sound" title="自分の番の合図音">${soundOn() ? '🔔 音あり' : '🔕 音なし'}</button>
     <button id="quit">${net ? '部屋を出る' : 'やめる'}</button></header>
@@ -444,6 +444,7 @@ function render() {
   ${st.log.length > 1 ? `<div class="lastlog">直前：${esc(st.log[st.log.length - 1])}</div>` : ''}
   <div class="seatsbar">${st.players.map((q, i) => `<div class="seat ${i === st.current && st.phase === 'play' ? 'now' : ''} ${i === me ? 'you' : ''}">
       <span class="dot p${i}"></span><b>${esc(q.name)}</b>${i === me ? '<em>あなた</em>' : ''}${q.finished ? ' ✓' : ''}${st.winners.includes(i) ? ' 🏆' : ''}
+      <small class="tn">${st.phase === 'over' ? `${st.round}回手番` : i === st.current ? `${st.round}回目の手番中` : `手番${st.round - 1 + (i < st.current ? 1 : 0)}回済`}</small>
       <small>持ち物${ownedTiles(q).length}・排除${q.removed}${st.rules.chips ? `・決心<span class="cg">${'◆'.repeat(q.chips ?? 0) || '0'}</span>` : ''}${q.perms.length ? `・★${q.perms.map(k => TILES[k].name).join('・')}` : ''}</small></div>`).join('')}</div>
   <main class="game ${mine ? 'myturn' : ''}">
     <section class="left">
@@ -491,8 +492,8 @@ function controlsHTML(): string {
       const can = canDraw(p, st.rules);
       const must = !p.placed.length && can;
       return `<p>${must ? '少なくとも1枚引きます' : `引くと今いるマスにタイルを置いて出ます．止めると<b>${fxWord(here)}</b>`}</p>
-        <div class="btns"><button id="draw" class="primary big" ${can ? '' : 'disabled'}>タイルを引く<small>袋 ${p.bag.length}${p.bag.length ? '' : can ? '（捨て山を戻す）' : ''}</small></button>
-        <button id="stop" class="big" ${must ? 'disabled' : ''}>ここで止める<small>${fxWord(here)}</small></button></div>`;
+        <div class="btns"><button id="draw" class="primary big" ${can ? '' : 'disabled'}>タイルを引く<small>袋 ${p.bag.length}${p.bag.length ? '' : can ? '（捨て山を戻す）' : ''}</small></button></div>
+        <div class="stopzone"><span class="muted">引かずに手番を切り上げる場合：</span><button id="stop" class="big stopbtn" ${must ? 'disabled' : ''}>ここで止める<small>${fxWord(here)}</small></button></div>`;
     }
     case 'branch': {
       const tile = p.placed[p.placed.length - 1];
