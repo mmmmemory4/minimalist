@@ -418,6 +418,13 @@ function marketHTML(buying: boolean, x = 0, left = Infinity): string {
   }).join('');
 }
 
+/** 向きの選択：十字キーの並び（↑は上，←は左，→は右，↓は下）．「タイルを引く」と違う見た目・位置にし，表示直後の誤クリックを防ぐ */
+function dpadHTML(dirs: Dir[], sub: (d: Dir) => string): string {
+  const rows = (['U', 'LR', 'D'] as const).map(r => dirs.filter(d => r.includes(d))).filter(r => r.length);
+  const col: Record<Dir, number> = { U: 2, D: 2, L: 1, R: 3 };
+  return `<div class="dpad">${rows.map((r, i) => r.map(d => `<button data-dir="${d}" class="dirbtn" style="grid-row:${i + 1};grid-column:${col[d]}"><b>${ARROW[d]}</b><small>${esc(sub(d))}</small></button>`).join('')).join('')}</div>`;
+}
+
 function turnBanner(): string {
   const st = s!;
   if (st.phase === 'over') return `<div class="banner over">ゲーム終了</div>`;
@@ -498,7 +505,7 @@ function controlsHTML(): string {
     case 'branch': {
       const tile = p.placed[p.placed.length - 1];
       return `<p><b>${TILES[tile.kind].name}</b>を置きました．どちらへ出ますか（盤の光っているマスでも選べます）</p>
-        <div class="btns">${dirsOf(tile.kind, env).map(d => `<button data-dir="${d}" class="primary big">${ARROW[d]}<small>${canMove(env, p.pos, d) ? fxWord(hereFxAt(p, step(p.pos, d))) : '出られない（ここに残る）'}</small></button>`).join('')}</div>`;
+        ${dpadHTML(dirsOf(tile.kind, env), d => canMove(env, p.pos, d) ? fxWord(hereFxAt(p, step(p.pos, d))) : '出られない（ここに残る）')}`;
     }
     case 'resolve': {
       if (st.rules.lastCard && isLastCard(p)) {

@@ -121,6 +121,12 @@ header { display: flex; gap: 12px; align-items: center; padding: 8px 16px; backg
 header .round { background: var(--surface2); border-radius: 20px; padding: 1px 14px; font-weight: 800; font-size: 16px; color: var(--gold); }
 .banner .lap, .seat .tn { font-weight: 700; color: var(--gold); }
 .banner.mine .lap { color: #5a4208; background: #fff3c4aa; border-radius: 10px; padding: 0 8px; }
+/* 向き選択：十字キーの並び．引くボタンと違う色にし，出た直後は0.7秒だけ押せない（押し間違い防止） */
+.dpad { display: grid; grid-template-columns: repeat(3, 118px); gap: 8px; justify-content: center; margin: 14px auto 4px; padding: 12px; border: 1px solid #5aa2ff55; border-radius: 14px; background: #5aa2ff14; animation: armed .7s steps(1, end); }
+@keyframes armed { from { pointer-events: none; opacity: .55; } to { pointer-events: auto; opacity: 1; } }
+button.dirbtn { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 6px; border-radius: 10px; background: linear-gradient(180deg, #2f4a73, #243958); border-color: #5aa2ff; color: #e8f0ff; }
+button.dirbtn:hover:not(:disabled) { background: linear-gradient(180deg, #3a5c91, #2c4670); }
+button.dirbtn b { font-size: 26px; line-height: 1; } button.dirbtn small { font-size: 11px; font-weight: 500; opacity: .85; color: inherit; }
 /* 「ここで止める」は「タイルを引く」から離し，目立たない見た目にして押し間違いを防ぐ */
 .stopzone { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 34px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 12px; }
 button.stopbtn { min-width: 110px; padding: 6px 12px; font-size: 13px; opacity: .85; }
