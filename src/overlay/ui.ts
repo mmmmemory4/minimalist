@@ -9,7 +9,7 @@ import {
   chipNeed, dirsOf, discardLimit, envOf, favCost, hereFx, isDeep, isLastCard, newOverlayGame, normRules, ownedTiles, printedFx, removeLoad, samePos,
   stackAt, step, tileFx, topTile, yMax, yMin,
 } from './engine';
-import { OBOT_LABELS, OPRESETS, chooseOverlayAction } from './bot';
+import { OBOT_LABELS, OPRESETS, RANDOM_BOT, chooseOverlayAction, resolveBot } from './bot';
 import { randomSeed } from '../engine/rng';
 
 const app = document.getElementById('app')!;
@@ -24,6 +24,11 @@ let timer = 0;
 const sel = { buy: [] as OKind[], remove: new Set<number>(), roomba: null as number | null };
 const clearSel = () => { sel.buy = []; sel.remove.clear(); sel.roomba = null; };
 let local: { rules: Rules; market: OKind[] } | null = null;
+let localBots: string[] = [];
+/** ローカル対戦の参加者．ランダムのボットはここでくじを引く（名前は型を明かさない） */
+const localSetup = (name: string) => [{ name }, ...localBots.map((t, i) => t === RANDOM_BOT
+  ? { name: `ボット${i + 1}（ランダム）`, isBot: true, botType: resolveBot(t) }
+  : { name: OBOT_LABELS[t], isBot: true, botType: t })];
 
 const esc = (t: string) => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
@@ -243,7 +248,7 @@ function lobby() {
   const room = net!.room;
   if (!room) { app.innerHTML = `<main class="setup"><p>部屋 ${esc(net!.code)} に接続しています…</p><button id="back">戻る</button></main>`; bindBack(); return; }
   const link = `${location.origin}${location.pathname}?room=${room.code}`;
-  const opts = Object.keys(OPRESETS).map(k => `<option value="${k}">${OBOT_LABELS[k]}</option>`).join('');
+  const opts = [RANDOM_BOT, ...Object.keys(OPRESETS)].map(k => `<option value="${k}">${OBOT_LABELS[k]}</option>`).join('');
   const prev = document.activeElement as HTMLInputElement | null;
   const caret = prev?.id === 'myname' ? prev.selectionStart : null;
   const named = !!store.get('name');
@@ -303,8 +308,8 @@ function setup() {
   clearTimeout(timer);
   me = 0;
   document.title = 'ミニマリスト オーバーレイ版';
-  const saved = (store.get('bots') ?? 'light,mixed').split(',');
-  const opts = (v: string) => Object.keys(OPRESETS).map(k => `<option value="${k}" ${k === v ? 'selected' : ''}>${OBOT_LABELS[k]}</option>`).join('');
+  const saved = (store.get('bots.v2') ?? `${RANDOM_BOT},${RANDOM_BOT}`).split(',');
+  const opts = (v: string) => [RANDOM_BOT, ...Object.keys(OPRESETS)].map(k => `<option value="${k}" ${k === v ? 'selected' : ''}>${OBOT_LABELS[k]}</option>`).join('');
   app.innerHTML = `
   <main class="setup">
     <h1 class="logo">ミニマリスト <span>オーバーレイ版</span></h1>
@@ -337,13 +342,14 @@ function setup() {
   app.querySelector<HTMLButtonElement>('#start')!.onclick = () => {
     const name = rawName() || 'あなた';
     let botTypes = [...app.querySelectorAll<HTMLSelectElement>('#bots select')].map(x => x.value).filter(Boolean);
-    if (!botTypes.length) botTypes = ['light'];
+    if (!botTypes.length) botTypes = [RANDOM_BOT];
     const o = readOptions();
     if (!o) return;
     store.set('name', name);
-    store.set('bots', botTypes.join(','));
+    store.set('bots.v2', botTypes.join(','));
     local = { rules: o.rules, market: o.market };
-    s = newOverlayGame([{ name }, ...botTypes.map(t => ({ name: OBOT_LABELS[t], isBot: true, botType: t }))], randomSeed(), local);
+    localBots = botTypes;
+    s = newOverlayGame(localSetup(name), randomSeed(), local);
     clearSel();
     render();
   };
@@ -568,7 +574,7 @@ function bindControls() {
   const q = <T extends HTMLElement>(x: string) => app.querySelector<T>(x);
   q('#again')?.addEventListener('click', () => {
     if (net) return send({ t: 'restart' });
-    s = newOverlayGame(s!.players.map(p => ({ name: p.name, isBot: p.isBot, botType: p.botType })), randomSeed(), local ?? {});
+    s = newOverlayGame(localSetup(s!.players[0].name), randomSeed(), local ?? {});
     clearSel();
     render();
   });

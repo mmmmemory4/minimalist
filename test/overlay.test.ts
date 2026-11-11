@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { OKind, TILES } from '../src/overlay/tiles';
 import { OState, Rules, applyOverlay, hereFx, isDone, newOverlayGame, ownedTiles, printedFx, OBOARDS, DEFAULT_RULES } from '../src/overlay/engine';
-import { OPRESETS, playOverlayTurn } from '../src/overlay/bot';
+import { OPRESETS, playOverlayTurn, resolveBot } from '../src/overlay/bot';
 
 const game = (rules: Partial<Rules> = {}) => newOverlayGame([{ name: 'A' }, { name: 'B' }], 1, { rules });
 /** 現在の手番の人の袋を，引く順に指定する */
@@ -33,6 +33,21 @@ describe('オーバーレイ版', () => {
         expect(p.bag[0].kind).toBe('HES'); // 引くのは末尾から，いちばん最後
         expect(p.bag.filter(c => c.kind === 'HES').length).toBe(hesCount);
       }
+    }
+  });
+
+  it('ボットの「ランダム」は学習AI6種からくじで決まり，どのAIも最後まで対戦できる', () => {
+    const ai = Object.keys(OPRESETS).filter(k => k.startsWith('ai'));
+    expect(ai.length).toBe(6);
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i++) seen.add(resolveBot('random', () => (i * 0.6180339) % 1));
+    expect([...seen].sort()).toEqual([...ai].sort());
+    expect(resolveBot('light')).toBe('light');
+    for (const k of ai) {
+      const s = newOverlayGame([{ name: 'A' }, { name: 'B' }], 7, {});
+      let guard = 0;
+      while (s.phase === 'play' && guard++ < 400) playOverlayTurn(s, [OPRESETS[k], OPRESETS[k]]);
+      expect(s.phase).toBe('over');
     }
   });
 
