@@ -493,7 +493,11 @@ function controlsHTML(): string {
   if (st.phase === 'over') {
     const host = !net || net.room?.isHost;
     return `<p class="big">${st.winners.length ? `${st.winners.map(i => esc(st.players[i].name)).join('・')}の${st.winners.length > 1 ? '共同勝利' : '勝利'}！` : '引き分け'}</p>
-      <p>${st.players.map(q => `${esc(q.name)}：排除${q.removed}枚・お気に入り${favCost(q)}`).join('<br>')}</p>
+      <div class="finalall">${st.players.map((q, i) => `<div class="fin ${st.winners.includes(i) ? 'win' : ''}">
+        <div class="fh"><span class="dot p${i}"></span><b>${esc(q.name)}</b>${st.winners.includes(i) ? ' 🏆' : ''}　排除${q.removed}枚・お気に入り${favCost(q)}</div>
+        <div class="fl"><span class="muted">残り${ownedTiles(q).length}枚</span><div class="chips">${chipsHTML(ownedTiles(q))}</div></div>
+        <div class="fl"><span class="muted">排除${(q.gone ?? []).length}枚</span><div class="chips">${chipsHTML(q.gone ?? [])}</div></div>
+        ${q.perms.length ? `<div class="fl"><span class="muted">お気に入り</span><div class="chips">${q.perms.map(k => tileHTML(k, { cls: 'chip' })).join('')}</div></div>` : ''}</div>`).join('')}</div>
       ${host ? `<button id="again" class="primary">もう一度（同じルール）</button> <button id="tolobby">ルールを変える</button>` : '<p class="muted">ホストが再戦を選べます</p>'}`;
   }
   const p = cur();

@@ -51,6 +51,17 @@ describe('オーバーレイ版', () => {
     }
   });
 
+  it('排除したタイルが記録される（終了時に全員分を見せるため）', () => {
+    const s = newOverlayGame([{ name: 'A' }, { name: 'B' }], 3, {});
+    let guard = 0;
+    while (s.phase === 'play' && guard++ < 400) playOverlayTurn(s, [OPRESETS.aiFree, OPRESETS.aiFav]);
+    expect(s.phase).toBe('over');
+    for (const p of s.players) {
+      expect((p.gone ?? []).length).toBe(p.removed);
+      expect(p.removed).toBeGreaterThan(0);
+    }
+  });
+
   it('少なくとも1枚引く', () => {
     const s = game();
     expect(() => applyOverlay(s, 0, { type: 'stop' })).toThrow();

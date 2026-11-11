@@ -189,6 +189,8 @@ export interface OPlayer {
   /** 片付けた跡（ルールで壁にしたときだけ使う） */
   traces: Pos[];
   removed: number;
+  /** 排除したタイル（終了時に見せる．古い保存データには無い） */
+  gone?: Tile[];
   bought: number;
   finished: boolean;
   /** 決心チップ */
@@ -390,6 +392,7 @@ function resolve(s: OState, p: OPlayer, a: { buy: OKind[]; remove: number[]; roo
     p.bought++;
   }
   const gone = new Set(a.roomba != null ? [...ids, a.roomba] : ids);
+  (p.gone ??= []).push(...[...p.placed, ...p.discard].filter(c => gone.has(c.id)).map(c => ({ id: c.id, kind: c.kind })));
   p.placed = p.placed.filter(c => !gone.has(c.id));
   p.discard = p.discard.filter(c => !gone.has(c.id));
   p.removed += gone.size;

@@ -121,6 +121,14 @@ header { display: flex; gap: 12px; align-items: center; padding: 8px 16px; backg
 header .round { background: var(--surface2); border-radius: 20px; padding: 1px 14px; font-weight: 800; font-size: 16px; color: var(--gold); }
 .banner .lap, .seat .tn { font-weight: 700; color: var(--gold); }
 .banner.mine .lap { color: #5a4208; background: #fff3c4aa; border-radius: 10px; padding: 0 8px; }
+/* ゲーム終了：全員の残りと排除したタイル */
+.finalall { display: grid; gap: 8px; margin: 8px 0 12px; }
+.fin { background: var(--surface2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.fin.win { border-color: var(--gold); }
+.fin .fh { font-size: 14px; margin-bottom: 4px; }
+.fin .fl { display: flex; gap: 10px; align-items: flex-start; margin-top: 4px; font-size: 12px; }
+.fin .fl > .muted { flex: none; width: 5.5em; padding-top: 4px; }
+.fin .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 /* 向き選択：十字キーの並び．引くボタンと違う色にし，出た直後は0.7秒だけ押せない（押し間違い防止） */
 .dpad { display: grid; grid-template-columns: repeat(3, 118px); gap: 8px; justify-content: center; margin: 14px auto 4px; padding: 12px; border: 1px solid #5aa2ff55; border-radius: 14px; background: #5aa2ff14; animation: armed .7s steps(1, end); }
 @keyframes armed { from { pointer-events: none; opacity: .55; } to { pointer-events: auto; opacity: 1; } }
